@@ -15,14 +15,21 @@ and no account.
 
 Ingest archives each export byte for byte in `data/raw/`, removes it from the inbox, skips a
 file it has seen, and skips shots already stored, so exporting the whole library again is safe.
-A file that fails to parse stays in the inbox and the error names the column or unit at fault.
-Files passed by path from outside the inbox are never deleted.
+A shot is identified by player, timestamp and club. If a new file carries a stored shot with
+different values (for example the same session exported with Normalize on), ingest keeps the
+stored values, reports the conflict, and leaves the file in the inbox. Run
+`bin/golf ingest --replace` to take the new file's values instead.
+A file that fails to parse stays in the inbox and the error names the line, column or unit at
+fault. A number the parser cannot read unambiguously (a thousands separator, or both `.` and
+`,` used as a decimal mark in one file) fails the whole file rather than becoming a gap.
+Only the inbox's own entries are deleted. A file passed by path from elsewhere, or the target
+of a symlink placed in the inbox, is never deleted.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `bin/golf ingest [files...]` | Import exports (default: everything in `data/inbox`), write reports and plans for the sessions they touch, rebuild the dashboard |
+| `bin/golf ingest [files...] [--replace]` | Import exports (default: everything in `data/inbox`), write reports and plans for the sessions they touch, rebuild the dashboard. `--replace` overwrites stored shots whose values differ |
 | `bin/golf report [session]` | Print the report for a session (default: the latest) |
 | `bin/golf sessions` | List sessions |
 | `bin/golf dashboard` | Rebuild `data/dashboard.html` |
@@ -41,8 +48,9 @@ The focus picker looks at the club with the most counted shots, once it has at l
    its window.
 
 If every check passes, it keeps face to path as the target so the pattern has to repeat.
-The chosen target becomes a plan in `data/plans/`, and the next session's report grades it:
-how many of the planned shots landed in the window, against the count when it was set.
+The chosen target becomes a plan in `data/plans/`. The same player's next session grades it:
+how many of the planned shots landed in the window, against the count when it was set. A
+session with no plan of its own breaks the chain, so an older plan is never graded twice.
 
 Every threshold and window is in `config.toml`. They are starting heuristics, not TrackMan
 guidance. `player.preferred_shape` moves the face to path window for a draw or a fade.

@@ -137,6 +137,7 @@
     const r = +v.toFixed(d) || 0;
     return (signed && r > 0 ? "+" : "") + r.toFixed(d);
   };
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
   const unitText = (u) => u === "deg" ? "°" : u ? " " + u : "";
   const el = (tag, attrs = {}, parent) => {
     const n = document.createElementNS(NS, tag);
@@ -214,7 +215,7 @@
     for (const [code, c] of Object.entries(sess.clubs)) {
       const b = document.createElement("button");
       b.className = "chip" + (code === state.club ? " on" : "");
-      b.innerHTML = `<span class="dot" style="background:${colorOf(code)}"></span>${code} <span style="opacity:.6">${c.n}</span>`;
+      b.innerHTML = `<span class="dot" style="background:${colorOf(code)}"></span>${esc(code)} <span style="opacity:.6">${c.n}</span>`;
       b.onclick = () => { state.club = code; render(); };
       box.appendChild(b);
     }
@@ -231,7 +232,7 @@
     let html = "";
     if (f) {
       const t = f.today, pct = t.n ? Math.round(100 * t.hits / t.n) : 0;
-      html += `<div><h2>Next session focus</h2><div class="headline">${f.club}: ${f.label.toLowerCase()} ${windowText(f)}</div><p class="reason">${f.reason}</p></div>`;
+      html += `<div><h2>Next session focus</h2><div class="headline">${esc(f.club)}: ${esc(f.label.toLowerCase())} ${windowText(f)}</div><p class="reason">${esc(f.reason)}</p></div>`;
       html += `<div class="side"><div class="sub" style="margin:0">In window this session</div><div class="headline" style="margin:2px 0 0">${t.hits} <span style="color:var(--muted);font-size:14px">of ${t.n} (${pct}%)</span></div><div class="meter"><div style="width:${pct}%"></div></div><div class="sub" style="margin:0">median ${fmt(t.median, 1, true)}${unitText(f.unit)}, spread ±${fmt(t.sd)}</div></div>`;
     } else {
       html += `<div><h2>Next session focus</h2><div class="headline">Not enough shots yet</div><p class="reason">Hit at least ${8} counted shots with one club so the checks have data.</p></div>`;
@@ -240,7 +241,7 @@
       html += `<div class="grade" style="grid-column:1/-1">` + sess.grades.map((g) => {
         const pct = g.n ? Math.round(100 * g.hits / g.n) : 0;
         const base = g.baseline.n ? `${g.baseline.hits} of ${g.baseline.n} (${Math.round(100 * g.baseline.hits / g.baseline.n)}%)` : "–";
-        return `<b>Last plan</b>: ${g.club} ${g.label.toLowerCase()} in [${fmt(g.window[0], 0, true)}, ${fmt(g.window[1], 0, true)}] · <b>${g.hits} of ${g.n} (${pct}%)</b> this session, ${base} when it was set.`;
+        return `<b>Last plan</b>: ${esc(g.club)} ${esc(g.label.toLowerCase())} in [${fmt(g.window[0], 0, true)}, ${fmt(g.window[1], 0, true)}] · <b>${g.hits} of ${g.n} (${pct}%)</b> this session, ${base} when it was set.`;
       }).join("<br>") + `</div>`;
     }
     box.innerHTML = html;
@@ -332,9 +333,9 @@
     $("miss").innerHTML = entries.map(([code, c]) => {
       const s = c.sides, on = code === state.club;
       const bar = (v, color) => `<div class="bar-line"><div class="bar" style="width:${Math.max(2, 70 * v / max)}%;background:${color}"></div>±${fmt(v)} yds</div>`;
-      return `<div class="miss-row" style="opacity:${on ? 1 : .55}"><b style="color:${colorOf(code)}">${code}</b><div>${bar(s.start_sd, "#60a5fa")}${bar(s.curve_sd, "#34d399")}</div></div>`;
+      return `<div class="miss-row" style="opacity:${on ? 1 : .55}"><b style="color:${colorOf(code)}">${esc(code)}</b><div>${bar(s.start_sd, "#60a5fa")}${bar(s.curve_sd, "#34d399")}</div></div>`;
     }).join("") + `<div class="legend"><span><i style="background:#60a5fa"></i>start line (face)</span><span><i style="background:#34d399"></i>curve (face to path)</span></div>`
-      + (shapes.length ? `<div class="shapes"><span class="sub" style="margin:0 4px 0 0">${state.club} shapes</span>${shapes.map(([k, v]) => `<span class="shape">${k}<b>${v}</b></span>`).join("")}</div>` : "");
+      + (shapes.length ? `<div class="shapes"><span class="sub" style="margin:0 4px 0 0">${esc(state.club)} shapes</span>${shapes.map(([k, v]) => `<span class="shape">${esc(k)}<b>${v}</b></span>`).join("")}</div>` : "");
   }
 
   function renderTrend() {
@@ -376,7 +377,7 @@
       ["F2P", "face_to_path", 1, true], ["Launch", "launch_angle", 1], ["Spin", "spin_rate", 0], ["Axis", "spin_axis", 1, true],
       ["AoA", "attack_angle", 1, true], ["Low pt", "low_point", 1, true], ["Offset", "impact_offset", 0, true], ["Height", "impact_height", 0, true]];
     const head = `<tr>${cols.map(([h]) => `<th>${h}</th>`).join("")}</tr>`;
-    const body = rows.map((r) => `<tr class="${r[C.use] ? "" : "out"}">${cols.map(([, k, d, sg]) => `<td>${d == null ? (r[C[k]] ?? "–") : fmt(r[C[k]], d, sg)}</td>`).join("")}</tr>`).join("");
+    const body = rows.map((r) => `<tr class="${r[C.use] ? "" : "out"}">${cols.map(([, k, d, sg]) => `<td>${d == null ? esc(r[C[k]] ?? "–") : fmt(r[C[k]], d, sg)}</td>`).join("")}</tr>`).join("");
     $("shots").innerHTML = head + body;
   }
 

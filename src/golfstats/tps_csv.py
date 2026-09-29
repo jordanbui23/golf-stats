@@ -38,6 +38,10 @@ _DATE_FORMATS = (
     "%m/%d/%Y %H:%M:%S",
 )
 _UNIT_IN_HEADER = re.compile(r"^(.*?)\s*\[([^\]]*)\]\s*$")
+_NUM_DOT = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
+_NUM_COMMA = re.compile(r"^[+-]?(\d+,?\d*|,\d+)([eE][+-]?\d+)?$")
+_DOT_DECIMAL = re.compile(r"^[+-]?\d*\.\d+([eE][+-]?\d+)?$")
+_COMMA_DECIMAL = re.compile(r"^[+-]?\d*,\d+([eE][+-]?\d+)?$")
 
 
 @dataclass
@@ -64,14 +68,22 @@ def unit_factor(f: Field, unit: str) -> float:
     return 1.0
 
 
-def parse_number(text: str) -> float | None:
+def parse_number(text: str, decimal: str = ".") -> float | None:
     s = text.strip().replace("\u2212", "-")
     if s.lower() in _MISSING:
         return None
-    if "," in s and "." not in s:
-        s = s.replace(",", ".")
-    value = float(s)
+    if not (_NUM_DOT if decimal == "." else _NUM_COMMA).match(s):
+        raise ValueError(f"not a number with decimal mark {decimal!r}: {text!r}")
+    value = float(s.replace(",", "."))
     return value if math.isfinite(value) else None
+
+
+def decimal_mark(cells: list[str]) -> str:
+    comma = any(_COMMA_DECIMAL.match(c.strip()) for c in cells)
+    dot = any(_DOT_DECIMAL.match(c.strip()) for c in cells)
+    if comma and dot:
+        raise ParseError("numbers use both '.' and ',' as a decimal mark, so neither can be trusted")
+    return "," if comma else "."
 
 
 def parse_date(text: str) -> datetime:
@@ -152,6 +164,9 @@ def parse_tps_csv(source: str | Path) -> ParsedExport:
     if missing_units:
         raise ParseError("no units for: " + ", ".join(missing_units) + " (expected a [unit] row under the header)")
 
+    numeric_idx = [i for i, _, key, _ in columns if key in FIELDS_BY_KEY]
+    decimal = decimal_mark([row[i] for row in data_rows for i in numeric_idx if i < len(row)])
+
     shots: list[dict] = []
     warnings: list[str] = []
     for line_no, row in enumerate(data_rows, start=h + 3):
@@ -167,10 +182,10 @@ def parse_tps_csv(source: str | Path) -> ParsedExport:
             seen.add(key)
             if key in FIELDS_BY_KEY:
                 try:
-                    value = parse_number(cell)
+                    value = parse_number(cell, decimal)
                 except ValueError:
-                    warnings.append(f"line {line_no}: {name}={cell!r} is not a number")
-                    value = None
+                    raise ParseError(f"line {line_no}: {name} = {cell!r} is not a number "
+                                     f"(decimal mark {decimal!r})") from None
                 shot[key] = None if value is None else value * factors[key]
             else:
                 shot[key] = cell.strip()

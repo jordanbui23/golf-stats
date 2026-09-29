@@ -22,7 +22,7 @@ def club_code(name: str) -> str:
     m = re.match(r"^(\d{2})\s*(deg|°)?\s*wedge", s) or re.match(r"^wedge\s*(\d{2})", s)
     if m:
         return m.group(1) + "°"
-    return name.strip()
+    return re.sub(r"[^\w °.+-]", "", name.strip())[:24] or "?"
 
 
 def club_order(code: str) -> tuple[int, int, str]:

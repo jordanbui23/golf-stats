@@ -37,8 +37,9 @@ TPS version unknown). A second repo's parser (`craigjhudson-source/Trackman-Shaf
   yards. `supported`. The parser converts every column by its units row, so this matters only
   if a units row is missing, and then it refuses the file.
 - Non-US locales may use `;` and decimal commas. `unverified`: a Danish screenshot shows
-  decimal commas in the TPS table, but no CSV from such a setup was found. The parser accepts
-  both anyway.
+  decimal commas in the TPS table, but no CSV from such a setup was found. The parser picks one
+  decimal mark per file from the numeric cells and refuses a file that mixes them or contains
+  a value it cannot read in that notation.
 
 ## Sign conventions (right-handed)
 

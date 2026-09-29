@@ -145,7 +145,7 @@ def club_summary(shots: list[dict]) -> dict:
         "sides": side_decomposition(counted),
         "estimated_spin_share": share(counted, lambda s: None if not s.get("spin_rate_type")
                                       else s["spin_rate_type"].lower() == "estimated"),
-        "club_data_missing_share": share(counted, lambda s: s.get("face_angle") is None),
+        "face_angle_missing_share": share(counted, lambda s: s.get("face_angle") is None),
         "impact_missing_share": share(counted, lambda s: s.get("impact_offset") is None),
         "low_point_behind_share": share(counted, lambda s: None if s.get("low_point") is None else s["low_point"] <= 0),
     }

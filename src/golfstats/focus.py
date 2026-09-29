@@ -116,13 +116,15 @@ def pick_focus(session: Session, cfg: Config) -> dict | None:
     if not f2p:
         return None
     return _focus(club, "face_to_path", f2p_w, shots,
-                  "Every check is inside its window. Keep the same target and make it repeat.")
+                  "Every median and spread is inside its window. Keep the same target and get more "
+                  "single shots inside it.")
 
 
 def make_plan(session: Session, focus: dict, cfg: Config) -> dict:
     return {
         "created": datetime.now().isoformat(timespec="seconds"),
         "source_session": session.id,
+        "player": session.player,
         "after": session.end.isoformat(),
         "blocks": [{
             "club": focus["club"],
@@ -142,12 +144,15 @@ def save_plan(plan: dict, plans_dir: Path) -> Path:
     return path
 
 
-def plan_before(session: Session, plans_dir: Path) -> dict | None:
-    if not plans_dir.exists():
+def plan_for(session: Session, sessions: list[Session], plans_dir: Path) -> dict | None:
+    earlier = [s for s in sessions if s.player == session.player and s.start < session.start]
+    if not earlier:
         return None
-    plans = [json.loads(p.read_text()) for p in sorted(plans_dir.glob("*.json"))]
-    earlier = [p for p in plans if datetime.fromisoformat(p["after"]) < session.start]
-    return max(earlier, key=lambda p: p["after"]) if earlier else None
+    path = plans_dir / f"{max(earlier, key=lambda s: s.start).id}.json"
+    if not path.exists():
+        return None
+    plan = json.loads(path.read_text())
+    return plan if plan.get("player", session.player) == session.player else None
 
 
 def grade_plan(plan: dict, session: Session) -> list[dict]:

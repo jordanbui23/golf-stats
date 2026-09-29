@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .config import Config, load_config
 from .dashboard import write_dashboard
-from .focus import grade_plan, make_plan, pick_focus, plan_before, save_plan
+from .focus import grade_plan, make_plan, pick_focus, plan_for, save_plan
 from .report import render_report
 from .stats import Session, split_sessions
 from .store import connect, ingest_file, load_shots
@@ -32,7 +32,7 @@ def _rel(path: Path) -> str:
 
 def _write_report(session: Session, sessions: list[Session], cfg: Config, save: bool) -> tuple[Path, dict | None]:
     focus = pick_focus(session, cfg)
-    plan = plan_before(session, cfg.plans)
+    plan = plan_for(session, sessions, cfg.plans)
     grades = grade_plan(plan, session) if plan else None
     plan_path = save_plan(make_plan(session, focus, cfg), cfg.plans) if (focus and save) else None
     text = render_report(session, sessions, focus, grades, _rel(plan_path) if plan_path else None)
@@ -52,6 +52,10 @@ def _focus_line(focus: dict | None) -> str:
             f" (today {t['hits']} of {t['n']} in window).")
 
 
+def in_inbox(path: Path, inbox: Path) -> bool:
+    return path.absolute().parent.resolve() == inbox.resolve()
+
+
 def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
     cfg.inbox.mkdir(parents=True, exist_ok=True)
     paths = [Path(p) for p in args.files] or sorted(p for p in cfg.inbox.iterdir() if p.suffix.lower() == ".csv")
@@ -63,7 +67,7 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
     new_imports: set[int] = set()
     for path in paths:
         try:
-            res = ingest_file(conn, path, cfg.archive)
+            res = ingest_file(conn, path, cfg.archive, replace=args.replace)
         except (ParseError, UnicodeDecodeError, OSError) as exc:
             print(f"{path.name}: not imported. {exc}")
             failed += 1
@@ -80,9 +84,17 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
                 print(f"  columns not used yet: {', '.join(res.unmapped)}")
             for w in res.warnings[:10]:
                 print(f"  warning: {w}")
-            if res.shots_added and res.import_id is not None:
+            if res.conflicts and args.replace:
+                print(f"  replaced {res.replaced} stored shot(s) with this file's values.")
+            elif res.conflicts:
+                where = "it stays in the inbox, so run `bin/golf ingest --replace`" if in_inbox(path, cfg.inbox) \
+                    else f"run `bin/golf ingest --replace {path}`"
+                print(f"  {len(res.conflicts)} shot(s) are already stored with different values (for example a "
+                      f"normalized export). Kept the stored values. To use this file's values, {where}. "
+                      f"First: {res.conflicts[0]}")
+            if (res.shots_added or res.replaced) and res.import_id is not None:
                 new_imports.add(res.import_id)
-        if path.resolve().parent == cfg.inbox.resolve():
+        if in_inbox(path, cfg.inbox) and not (res.conflicts and not args.replace):
             path.unlink()
     conn.close()
 
@@ -133,7 +145,7 @@ def cmd_demo(args: argparse.Namespace, cfg: Config) -> int:
     demo.inbox.mkdir(parents=True, exist_ok=True)
     for name, text in demo_exports():
         (demo.inbox / name).write_text(text)
-        cmd_ingest(argparse.Namespace(files=[]), demo)
+        cmd_ingest(argparse.Namespace(files=[], replace=False), demo)
     return 0
 
 
@@ -143,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("ingest", help="import TrackMan CSV exports (default: everything in data/inbox)")
     p.add_argument("files", nargs="*")
+    p.add_argument("--replace", action="store_true",
+                   help="overwrite stored shots whose values differ from this file's")
     p.set_defaults(func=cmd_ingest)
     p = sub.add_parser("report", help="print the report for a session (default: latest)")
     p.add_argument("session", nargs="?")

@@ -111,6 +111,37 @@ def test_date_formats(text, expected):
     assert parse_date(text) == expected
 
 
-@pytest.mark.parametrize("text,expected", [("", None), ("---", None), ("-1.5", -1.5), ("3,25", 3.25), ("\u22122", -2.0)])
-def test_parse_number(text, expected):
-    assert parse_number(text) == expected
+@pytest.mark.parametrize("text,decimal,expected", [
+    ("", ".", None), ("---", ".", None), ("-1.5", ".", -1.5), ("3,25", ",", 3.25), ("\u22122", ".", -2.0),
+    ("1e-05", ".", 1e-05), ("85.35030422333571", ".", 85.35030422333571),
+])
+def test_parse_number(text, decimal, expected):
+    assert parse_number(text, decimal) == expected
+
+
+@pytest.mark.parametrize("text,decimal", [("1,234", "."), ("1.234,56", ","), ("1.5", ","), ("abc", ".")])
+def test_parse_number_rejects_other_notations(text, decimal):
+    with pytest.raises(ValueError):
+        parse_number(text, decimal)
+
+
+HEADER = ["Date", "Club", "Club Speed", "Spin Rate"]
+UNITS = ["", "", "[mph]", "[rpm]"]
+
+
+def test_thousands_separator_in_a_dot_decimal_file_is_refused():
+    rows = [["5/6/2026 6:58:02 PM", "7 Iron", "82.5", '"5,491"'], ["5/6/2026 6:59:02 PM", "7 Iron", "81.0", "5400.5"]]
+    with pytest.raises(ParseError, match="decimal mark"):
+        parse_tps_csv(tiny_csv(HEADER, UNITS, rows))
+
+
+def test_grouped_comma_decimal_value_is_refused():
+    rows = [["14.10.2026 18:03:11", "7 Iron", "82,5", "5.491,6"]]
+    with pytest.raises(ParseError, match="not a number"):
+        parse_tps_csv(tiny_csv(HEADER, UNITS, rows, sep=";"))
+
+
+def test_text_in_a_numeric_column_fails_the_file():
+    rows = [["5/6/2026 6:58:02 PM", "7 Iron", "fast", "5400"]]
+    with pytest.raises(ParseError, match="Club Speed"):
+        parse_tps_csv(tiny_csv(HEADER, UNITS, rows))

@@ -53,6 +53,8 @@ class IngestResult:
     unmapped: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     source_units: dict[str, str] = field(default_factory=dict)
+    conflicts: list[str] = field(default_factory=list)
+    replaced: int = 0
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -67,48 +69,74 @@ def shot_key(shot: dict) -> str:
     return f"{shot.get('player', '')}|{shot['ts'].isoformat()}|{shot['club']}"
 
 
-def ingest_file(conn: sqlite3.Connection, path: Path, archive_dir: Path) -> IngestResult:
+def _same(a: float | None, b: float | None) -> bool:
+    if a is None or b is None:
+        return a is b
+    return abs(a - b) <= 1e-6 * max(1.0, abs(a), abs(b))
+
+
+def ingest_file(conn: sqlite3.Connection, path: Path, archive_dir: Path, replace: bool = False) -> IngestResult:
     data = path.read_bytes()
     sha = hashlib.sha256(data).hexdigest()
-    if conn.execute("SELECT 1 FROM imports WHERE sha256 = ?", (sha,)).fetchone():
+    known = conn.execute("SELECT id, archived_path FROM imports WHERE sha256 = ?", (sha,)).fetchone()
+    if known and not replace:
         return IngestResult(path, sha, already_imported=True)
 
     parsed = parse_tps_csv(data.decode("utf-8-sig"))
-    first = min(s["ts"] for s in parsed.shots)
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    archived = archive_dir / f"{first:%Y%m%d-%H%M}-{sha[:8]}.csv"
-    shutil.copyfile(path, archived)
-
-    cols = ["shot_key", "import_id", "ts", "use_in_stat", *_TEXT, *_NUMERIC, "raw"]
-    sql = f"INSERT OR IGNORE INTO shots ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})"
+    if known:
+        archived, copied = Path(known["archived_path"]), False
+    else:
+        first = min(s["ts"] for s in parsed.shots)
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archived, copied = archive_dir / f"{first:%Y%m%d-%H%M}-{sha[:8]}.csv", True
+        shutil.copyfile(path, archived)
     try:
-        import_id, added = _insert(conn, sql, parsed, sha, path, archived)
+        import_id, added, conflicts, replaced = _insert(conn, parsed, sha, path, archived, replace,
+                                                        known["id"] if known else None)
     except BaseException:
-        archived.unlink(missing_ok=True)
+        if copied:
+            archived.unlink(missing_ok=True)
         raise
     return IngestResult(path, sha, already_imported=False, import_id=import_id, shots_in_file=len(parsed.shots),
                         shots_added=added, archived_path=archived, unmapped=parsed.unmapped,
-                        warnings=parsed.warnings, source_units=parsed.source_units)
+                        warnings=parsed.warnings, source_units=parsed.source_units, conflicts=conflicts,
+                        replaced=replaced)
 
 
-def _insert(conn: sqlite3.Connection, sql: str, parsed, sha: str, path: Path, archived: Path) -> tuple[int, int]:
+def _insert(conn: sqlite3.Connection, parsed, sha: str, path: Path, archived: Path,
+            replace: bool, import_id: int | None) -> tuple[int, int, list[str], int]:
+    cols = ["shot_key", "import_id", "ts", "use_in_stat", *_TEXT, *_NUMERIC, "raw"]
+    insert = f"INSERT OR IGNORE INTO shots ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})"
+    update = f"UPDATE shots SET {', '.join(f'{c} = ?' for c in cols[1:])} WHERE shot_key = ?"
+    conflicts: list[str] = []
+    added = replaced = 0
     with conn:
-        cur = conn.execute(
-            "INSERT INTO imports (sha256, filename, archived_path, imported_at, shots_in_file, shots_added,"
-            " source_units, unmapped) VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
-            (sha, path.name, str(archived), datetime.now().isoformat(timespec="seconds"), len(parsed.shots),
-             json.dumps(parsed.source_units), json.dumps(parsed.unmapped)),
-        )
-        import_id = int(cur.lastrowid or 0)
-        added = 0
+        if import_id is None:
+            cur = conn.execute(
+                "INSERT INTO imports (sha256, filename, archived_path, imported_at, shots_in_file, shots_added,"
+                " source_units, unmapped) VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+                (sha, path.name, str(archived), datetime.now().isoformat(timespec="seconds"), len(parsed.shots),
+                 json.dumps(parsed.source_units), json.dumps(parsed.unmapped)),
+            )
+            import_id = int(cur.lastrowid or 0)
         for s in parsed.shots:
-            row = [shot_key(s), import_id, s["ts"].isoformat(), int(s["use_in_stat"])]
+            key = shot_key(s)
+            row = [key, import_id, s["ts"].isoformat(), int(s["use_in_stat"])]
             row += [club_code(s["club"]) if c == "club_code" else s.get(c, "") for c in _TEXT]
             row += [s.get(c) for c in _NUMERIC]
             row.append(json.dumps(s["raw"]))
-            added += conn.execute(sql, row).rowcount
-        conn.execute("UPDATE imports SET shots_added = ? WHERE id = ?", (added, import_id))
-    return import_id, added
+            if conn.execute(insert, row).rowcount:
+                added += 1
+                continue
+            stored = conn.execute(f"SELECT use_in_stat, {', '.join(_NUMERIC)} FROM shots WHERE shot_key = ?",
+                                  (key,)).fetchone()
+            if stored["use_in_stat"] == int(s["use_in_stat"]) and all(_same(stored[c], s.get(c)) for c in _NUMERIC):
+                continue
+            conflicts.append(key)
+            if replace:
+                replaced += conn.execute(update, [*row[1:], key]).rowcount
+        conn.execute("UPDATE imports SET shots_added = shots_added + ? WHERE id = ?", (added + replaced, import_id))
+    return import_id, added, conflicts, replaced
 
 
 def load_shots(conn: sqlite3.Connection) -> list[dict]:

@@ -5,7 +5,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from golfstats.config import Config
-from golfstats.focus import grade_plan, make_plan, pick_focus, plan_before, save_plan
+from golfstats.clubs import club_code
+from golfstats.focus import grade_plan, make_plan, pick_focus, plan_for, save_plan
 from golfstats.stats import curve_label, robust_sd, shape_label, side_decomposition, split_sessions, start_label
 
 T0 = datetime(2026, 10, 1, 18, 0)
@@ -83,7 +84,7 @@ def test_no_focus_without_enough_shots():
 
 def test_clean_session_holds_the_pattern():
     f = focus_for(iron_shots())
-    assert f["metric"] == "face_to_path" and "inside its window" in f["reason"]
+    assert f["metric"] == "face_to_path" and "is inside its window" in f["reason"]
 
 
 def test_low_point_behind_the_ball_comes_first():
@@ -124,7 +125,7 @@ def test_preferred_draw_moves_the_face_to_path_window():
     c = cfg()
     c.preferred_shape = "draw"
     f = focus_for(iron_shots(face_to_path=-2.0), c)
-    assert f["window"] == [-4.0, 0.0] and "inside its window" in f["reason"]
+    assert f["window"] == [-4.0, 0.0] and "is inside its window" in f["reason"]
 
 
 def test_plan_round_trip_and_grading(tmp_path):
@@ -135,8 +136,30 @@ def test_plan_round_trip_and_grading(tmp_path):
     save_plan(make_plan(first, focus, c), c.plans)
     later = split_sessions([{**s, "ts": s["ts"] + timedelta(days=7),
                              "face_to_path": 0.0 if i < 12 else 5.0} for i, s in enumerate(iron_shots(30))], 90)[0]
-    plan = plan_before(later, c.plans)
+    sessions = [first, later]
+    plan = plan_for(later, sessions, c.plans)
     assert plan and plan["source_session"] == first.id
-    assert plan_before(first, c.plans) is None
+    assert plan_for(first, sessions, c.plans) is None
     grade = grade_plan(plan, later)[0]
     assert (grade["hits"], grade["n"], grade["baseline"]["hits"]) == (12, 20, 0)
+
+
+def test_a_plan_only_grades_the_next_session_of_the_same_player(tmp_path):
+    c = cfg(tmp_path)
+    first = session(iron_shots(face_to_path=5.0))
+    focus = pick_focus(first, c)
+    assert focus is not None
+    save_plan(make_plan(first, focus, c), c.plans)
+    moved = lambda days, player="J": [{**s, "ts": s["ts"] + timedelta(days=days), "player": player} for s in iron_shots(5)]
+    second, third = session(moved(7)), session(moved(14))
+    other = session(moved(7, "K"))
+    sessions = [first, second, third, other]
+    assert plan_for(second, sessions, c.plans) is not None
+    assert plan_for(third, sessions, c.plans) is None
+    assert plan_for(other, sessions, c.plans) is None
+
+
+def test_unknown_club_names_cannot_carry_markup():
+    code = club_code('<img src=x onerror="alert(1)">')
+    assert not set(code) & set('<>"=()')
+    assert club_code("56° Wedge") == "56°" and club_code("Pitching Wedge") == "PW" and club_code("4 Hybrid") == "4H"

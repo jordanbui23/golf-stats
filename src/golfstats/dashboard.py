@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .config import Config
 from .fields import FIELDS_BY_KEY
-from .focus import grade_plan, pick_focus, plan_before
+from .focus import grade_plan, pick_focus, plan_for
 from .stats import Session, by_club, club_summary, shape_label
 
 SHOT_COLUMNS = (
@@ -38,7 +38,7 @@ def _club_block(shots: list[dict]) -> dict:
 def build_data(sessions: list[Session], cfg: Config) -> dict:
     out_sessions, shots = [], []
     for idx, sess in enumerate(sessions):
-        plan = plan_before(sess, cfg.plans)
+        plan = plan_for(sess, sessions, cfg.plans)
         out_sessions.append({
             "id": sess.id, "label": sess.label, "player": sess.player, "start": sess.start.isoformat(),
             "shots": len(sess.shots), "counted": len(sess.counted),
@@ -62,7 +62,8 @@ def build_data(sessions: list[Session], cfg: Config) -> dict:
 
 def render_dashboard(sessions: list[Session], cfg: Config) -> str:
     template = files("golfstats").joinpath("dashboard.html").read_text()
-    payload = json.dumps(build_data(sessions, cfg), separators=(",", ":")).replace("</", "<\\/")
+    payload = json.dumps(build_data(sessions, cfg), separators=(",", ":"))
+    payload = payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     return template.replace("/*__DATA__*/null", payload)
 
 
