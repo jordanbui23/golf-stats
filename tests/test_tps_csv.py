@@ -145,3 +145,9 @@ def test_text_in_a_numeric_column_fails_the_file():
     rows = [["5/6/2026 6:58:02 PM", "7 Iron", "fast", "5400"]]
     with pytest.raises(ParseError, match="Club Speed"):
         parse_tps_csv(tiny_csv(HEADER, UNITS, rows))
+
+
+def test_values_that_could_all_be_thousands_groups_are_refused():
+    rows = [["5/6/2026 6:58:02 PM", "7 Iron", "82", '"5,491"'], ["5/6/2026 6:59:02 PM", "7 Iron", "81", '"5,402"']]
+    with pytest.raises(ParseError, match="thousands"):
+        parse_tps_csv(tiny_csv(HEADER, UNITS, rows))

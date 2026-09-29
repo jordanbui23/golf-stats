@@ -14,6 +14,7 @@ from .tps_csv import parse_tps_csv
 
 _NUMERIC = [f.key for f in NUMERIC_FIELDS]
 _TEXT = ["player", "club", "club_code", "ball", "spin_rate_type", "tags", "condition"]
+_COMPARED = ["use_in_stat", "ball", "spin_rate_type", "tags", "condition", *_NUMERIC]
 
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS imports (
@@ -25,7 +26,8 @@ CREATE TABLE IF NOT EXISTS imports (
     shots_in_file INTEGER NOT NULL,
     shots_added INTEGER NOT NULL,
     source_units TEXT NOT NULL,
-    unmapped TEXT NOT NULL
+    unmapped TEXT NOT NULL,
+    pending_conflicts TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS shots (
     id INTEGER PRIMARY KEY,
@@ -62,6 +64,9 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(imports)")}
+    if "pending_conflicts" not in cols:
+        conn.execute("ALTER TABLE imports ADD COLUMN pending_conflicts TEXT NOT NULL DEFAULT '[]'")
     return conn
 
 
@@ -69,18 +74,22 @@ def shot_key(shot: dict) -> str:
     return f"{shot.get('player', '')}|{shot['ts'].isoformat()}|{shot['club']}"
 
 
-def _same(a: float | None, b: float | None) -> bool:
+def _same(a, b) -> bool:
+    if isinstance(a, float) and isinstance(b, float):
+        return abs(a - b) <= 1e-6 * max(1.0, abs(a), abs(b))
     if a is None or b is None:
         return a is b
-    return abs(a - b) <= 1e-6 * max(1.0, abs(a), abs(b))
+    return a == b
 
 
 def ingest_file(conn: sqlite3.Connection, path: Path, archive_dir: Path, replace: bool = False) -> IngestResult:
     data = path.read_bytes()
     sha = hashlib.sha256(data).hexdigest()
-    known = conn.execute("SELECT id, archived_path FROM imports WHERE sha256 = ?", (sha,)).fetchone()
+    known = conn.execute("SELECT id, archived_path, pending_conflicts FROM imports WHERE sha256 = ?",
+                         (sha,)).fetchone()
     if known and not replace:
-        return IngestResult(path, sha, already_imported=True)
+        return IngestResult(path, sha, already_imported=True, import_id=known["id"],
+                            conflicts=json.loads(known["pending_conflicts"]))
 
     parsed = parse_tps_csv(data.decode("utf-8-sig"))
     if known:
@@ -128,14 +137,15 @@ def _insert(conn: sqlite3.Connection, parsed, sha: str, path: Path, archived: Pa
             if conn.execute(insert, row).rowcount:
                 added += 1
                 continue
-            stored = conn.execute(f"SELECT use_in_stat, {', '.join(_NUMERIC)} FROM shots WHERE shot_key = ?",
-                                  (key,)).fetchone()
-            if stored["use_in_stat"] == int(s["use_in_stat"]) and all(_same(stored[c], s.get(c)) for c in _NUMERIC):
+            stored = conn.execute(f"SELECT {', '.join(_COMPARED)} FROM shots WHERE shot_key = ?", (key,)).fetchone()
+            incoming = dict(zip(cols, row))
+            if all(_same(stored[c], incoming[c]) for c in _COMPARED):
                 continue
             conflicts.append(key)
             if replace:
                 replaced += conn.execute(update, [*row[1:], key]).rowcount
-        conn.execute("UPDATE imports SET shots_added = shots_added + ? WHERE id = ?", (added + replaced, import_id))
+        conn.execute("UPDATE imports SET shots_added = shots_added + ?, pending_conflicts = ? WHERE id = ?",
+                     (added + replaced, json.dumps([] if replace else conflicts), import_id))
     return import_id, added, conflicts, replaced
 
 

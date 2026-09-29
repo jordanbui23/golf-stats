@@ -79,11 +79,15 @@ def parse_number(text: str, decimal: str = ".") -> float | None:
 
 
 def decimal_mark(cells: list[str]) -> str:
-    comma = any(_COMMA_DECIMAL.match(c.strip()) for c in cells)
-    dot = any(_DOT_DECIMAL.match(c.strip()) for c in cells)
-    if comma and dot:
+    commas = [c.strip() for c in cells if _COMMA_DECIMAL.match(c.strip())]
+    dots = [c.strip() for c in cells if _DOT_DECIMAL.match(c.strip())]
+    if commas and dots:
         raise ParseError("numbers use both '.' and ',' as a decimal mark, so neither can be trusted")
-    return "," if comma else "."
+    mark, found = ("," if commas else "."), commas or dots
+    if found and all(len(re.split(r"[.,]", c)[1].split("e")[0].split("E")[0]) == 3 for c in found):
+        raise ParseError(f"every value with a {mark!r} has exactly three digits after it, so it may be a "
+                         "thousands separator rather than a decimal mark")
+    return mark
 
 
 def parse_date(text: str) -> datetime:

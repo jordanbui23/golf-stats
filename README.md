@@ -16,12 +16,15 @@ and no account.
 Ingest archives each export byte for byte in `data/raw/`, removes it from the inbox, skips a
 file it has seen, and skips shots already stored, so exporting the whole library again is safe.
 A shot is identified by player, timestamp and club. If a new file carries a stored shot with
-different values (for example the same session exported with Normalize on), ingest keeps the
-stored values, reports the conflict, and leaves the file in the inbox. Run
-`bin/golf ingest --replace` to take the new file's values instead.
+different values in any measurement, the spin type, tags, the ball or the condition text (for
+example the same session exported with Normalize on), ingest keeps the stored values, reports
+the conflict on every run, and leaves the file in the inbox until `bin/golf ingest --replace`
+takes the new file's values. Replacing an earlier session also refreshes the reports of later
+sessions, because their comparisons and plan grades depend on it.
 A file that fails to parse stays in the inbox and the error names the line, column or unit at
-fault. A number the parser cannot read unambiguously (a thousands separator, or both `.` and
-`,` used as a decimal mark in one file) fails the whole file rather than becoming a gap.
+fault. A number the parser cannot read unambiguously fails the whole file rather than becoming
+a gap: a thousands separator, both `.` and `,` used as a decimal mark in one file, or a file
+whose every decimal value has exactly three digits after the mark.
 Only the inbox's own entries are deleted. A file passed by path from elsewhere, or the target
 of a symlink placed in the inbox, is never deleted.
 

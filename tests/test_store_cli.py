@@ -27,12 +27,12 @@ def write_export(folder: Path, name: str, start: datetime = START, seed: int = 1
     return path
 
 
-def write_conflicting(folder: Path, name: str, source: Path) -> Path:
+def write_conflicting(folder: Path, name: str, source: Path, column: str = "Club Speed") -> Path:
     lines = source.read_text(encoding="utf-8-sig").splitlines()
     rows = list(csv.reader(lines[1:]))
-    col = rows[0].index("Club Speed")
+    col = rows[0].index(column)
     for r in rows[2:]:
-        r[col] = repr(float(r[col]) + 1.5)
+        r[col] = repr(float(r[col]) + 1.5) if column == "Club Speed" else "Estimated"
     buf = io.StringIO()
     buf.write(lines[0] + "\r\n")
     csv.writer(buf, lineterminator="\r\n").writerows(rows)
@@ -136,6 +136,9 @@ def test_cli_keeps_a_conflicting_inbox_file_until_replace(cfg_file, tmp_path, ca
     b = write_conflicting(cfg.inbox, "b.csv", a)
     main(["--config", str(cfg_file), "ingest"])
     assert b.exists() and "--replace" in capsys.readouterr().out
+    main(["--config", str(cfg_file), "ingest"])
+    out = capsys.readouterr().out
+    assert b.exists() and "already imported" in out and "20 shot(s) are already stored" in out
     assert main(["--config", str(cfg_file), "ingest", "--replace"]) == 0
     assert not b.exists() and "replaced 20" in capsys.readouterr().out
 
@@ -170,3 +173,26 @@ def test_dashboard_payload_cannot_close_or_comment_out_its_script(tmp_path):
     script = html.split("const DATA = ", 1)[1].split(";</script>", 1)[0]
     assert "<" not in script and ">" not in script and "&" not in script
     assert html.count("</script>") == 2
+
+
+def test_a_change_in_spin_rate_type_alone_is_a_conflict(tmp_path):
+    conn = connect(tmp_path / "golf.db")
+    first = write_export(tmp_path / "in", "a.csv", seed=1)
+    ingest_file(conn, first, tmp_path / "raw")
+    res = ingest_file(conn, write_conflicting(tmp_path / "in", "b.csv", first, "Spin Rate Type"), tmp_path / "raw")
+    assert len(res.conflicts) > 0 and res.shots_added == 0
+
+
+def test_replacing_an_earlier_session_refreshes_later_reports(cfg_file, tmp_path, capsys):
+    cfg = load_config(cfg_file)
+    a = write_export(tmp_path / "keep", "a.csv", plan=[("7 Iron", 24)])
+    main(["--config", str(cfg_file), "ingest", str(a)])
+    write_export(cfg.inbox, "s2.csv", start=START + timedelta(days=7), seed=2, plan=[("7 Iron", 24)])
+    main(["--config", str(cfg_file), "ingest"])
+    later = cfg.reports / "2026-10-08-1800.md"
+    later.write_text("stale")
+    write_conflicting(cfg.inbox, "a2.csv", a)
+    capsys.readouterr()
+    assert main(["--config", str(cfg_file), "ingest", "--replace"]) == 0
+    assert "Refreshed 1 later report(s)" in capsys.readouterr().out
+    assert "## Last plan" in later.read_text()
