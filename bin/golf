@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -x "$REPO/.venv/bin/python" ]; then
+  PY="$REPO/.venv/bin/python"
+else
+  PY="${PYTHON:-python3}"
+fi
+PYTHONPATH="$REPO/src${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m golfstats "$@"

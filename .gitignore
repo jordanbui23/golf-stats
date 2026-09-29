@@ -1,0 +1,12 @@
+# Shot data, archived exports, reports and the generated dashboard. Personal data.
+data/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# OpenCode tooling dirs
+.opencode/
+.omo/

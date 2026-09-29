@@ -1,0 +1,37 @@
+# Settings for golf-stats. Thresholds are starting heuristics, not TrackMan guidance.
+# Tune them once real sessions show what "normal" looks like for you.
+
+data_dir = "data"
+
+[player]
+# TPS player name to analyse. Empty means every player in the export.
+name = ""
+# Only "R" is supported. TrackMan's sign conventions for left-handed players are unverified.
+handedness = "R"
+# Target shot shape: "straight", "draw" or "fade". Sets the face-to-path window.
+preferred_shape = "straight"
+
+[sessions]
+# A gap longer than this between two shots starts a new session.
+gap_minutes = 90
+
+[focus]
+# A club needs this many counted shots before the focus picker looks at it.
+min_shots = 8
+# Strike checks run first. Median Smash Index below this counts as a strike problem.
+smash_index_min = 95.0
+# Robust spread of impact offset (heel to toe) above this counts as a strike problem.
+impact_offset_spread_mm = 8.0
+# Irons and wedges: share of shots bottoming out at or behind the ball above this is a problem.
+low_point_behind_share = 0.25
+# Median curve beyond this share of carry counts as a shape bias.
+curve_bias_pct = 4.0
+# Target window for face angle (start line), degrees.
+face_window = [-2.0, 2.0]
+# Shots per block in the generated plan.
+plan_shots = 20
+
+[focus.face_to_path_window]
+straight = [-2.0, 2.0]
+draw = [-4.0, 0.0]
+fade = [0.0, 4.0]
