@@ -88,8 +88,13 @@ def ingest_file(conn: sqlite3.Connection, path: Path, archive_dir: Path, replace
     known = conn.execute("SELECT id, archived_path, pending_conflicts FROM imports WHERE sha256 = ?",
                          (sha,)).fetchone()
     if known and not replace:
-        return IngestResult(path, sha, already_imported=True, import_id=known["id"],
-                            conflicts=json.loads(known["pending_conflicts"]))
+        pending = json.loads(known["pending_conflicts"])
+        if pending:
+            parsed = parse_tps_csv(data.decode("utf-8-sig"))
+            pending = [shot_key(s) for s in parsed.shots if _differs(conn, _row(s, known["id"]))]
+            with conn:
+                conn.execute("UPDATE imports SET pending_conflicts = ? WHERE id = ?", (json.dumps(pending), known["id"]))
+        return IngestResult(path, sha, already_imported=True, import_id=known["id"], conflicts=pending)
 
     parsed = parse_tps_csv(data.decode("utf-8-sig"))
     if known:
@@ -112,11 +117,29 @@ def ingest_file(conn: sqlite3.Connection, path: Path, archive_dir: Path, replace
                         replaced=replaced)
 
 
+_COLS = ["shot_key", "import_id", "ts", "use_in_stat", *_TEXT, *_NUMERIC, "raw"]
+
+
+def _row(s: dict, import_id: int) -> list:
+    row = [shot_key(s), import_id, s["ts"].isoformat(), int(s["use_in_stat"])]
+    row += [club_code(s["club"]) if c == "club_code" else s.get(c, "") for c in _TEXT]
+    row += [s.get(c) for c in _NUMERIC]
+    row.append(json.dumps(s["raw"]))
+    return row
+
+
+def _differs(conn: sqlite3.Connection, row: list) -> bool:
+    stored = conn.execute(f"SELECT {', '.join(_COMPARED)} FROM shots WHERE shot_key = ?", (row[0],)).fetchone()
+    if stored is None:
+        return False
+    incoming = dict(zip(_COLS, row))
+    return not all(_same(stored[c], incoming[c]) for c in _COMPARED)
+
+
 def _insert(conn: sqlite3.Connection, parsed, sha: str, path: Path, archived: Path,
             replace: bool, import_id: int | None) -> tuple[int, int, list[str], int]:
-    cols = ["shot_key", "import_id", "ts", "use_in_stat", *_TEXT, *_NUMERIC, "raw"]
-    insert = f"INSERT OR IGNORE INTO shots ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})"
-    update = f"UPDATE shots SET {', '.join(f'{c} = ?' for c in cols[1:])} WHERE shot_key = ?"
+    insert = f"INSERT OR IGNORE INTO shots ({', '.join(_COLS)}) VALUES ({', '.join('?' * len(_COLS))})"
+    update = f"UPDATE shots SET {', '.join(f'{c} = ?' for c in _COLS[1:])} WHERE shot_key = ?"
     conflicts: list[str] = []
     added = replaced = 0
     with conn:
@@ -129,21 +152,15 @@ def _insert(conn: sqlite3.Connection, parsed, sha: str, path: Path, archived: Pa
             )
             import_id = int(cur.lastrowid or 0)
         for s in parsed.shots:
-            key = shot_key(s)
-            row = [key, import_id, s["ts"].isoformat(), int(s["use_in_stat"])]
-            row += [club_code(s["club"]) if c == "club_code" else s.get(c, "") for c in _TEXT]
-            row += [s.get(c) for c in _NUMERIC]
-            row.append(json.dumps(s["raw"]))
+            row = _row(s, import_id)
             if conn.execute(insert, row).rowcount:
                 added += 1
                 continue
-            stored = conn.execute(f"SELECT {', '.join(_COMPARED)} FROM shots WHERE shot_key = ?", (key,)).fetchone()
-            incoming = dict(zip(cols, row))
-            if all(_same(stored[c], incoming[c]) for c in _COMPARED):
+            if not _differs(conn, row):
                 continue
-            conflicts.append(key)
+            conflicts.append(row[0])
             if replace:
-                replaced += conn.execute(update, [*row[1:], key]).rowcount
+                replaced += conn.execute(update, [*row[1:], row[0]]).rowcount
         conn.execute("UPDATE imports SET shots_added = shots_added + ?, pending_conflicts = ? WHERE id = ?",
                      (added + replaced, json.dumps([] if replace else conflicts), import_id))
     return import_id, added, conflicts, replaced

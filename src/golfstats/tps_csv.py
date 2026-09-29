@@ -168,8 +168,13 @@ def parse_tps_csv(source: str | Path) -> ParsedExport:
     if missing_units:
         raise ParseError("no units for: " + ", ".join(missing_units) + " (expected a [unit] row under the header)")
 
-    numeric_idx = [i for i, _, key, _ in columns if key in FIELDS_BY_KEY]
-    decimal = decimal_mark([row[i] for row in data_rows for i in numeric_idx if i < len(row)])
+    numeric = [(i, name) for i, name, key, _ in columns if key in FIELDS_BY_KEY]
+    decimal = decimal_mark([row[i] for row in data_rows for i, _ in numeric if i < len(row)])
+    for i, name in numeric:
+        try:
+            decimal_mark([row[i] for row in data_rows if i < len(row)])
+        except ParseError as exc:
+            raise ParseError(f"{name}: {exc}") from None
 
     shots: list[dict] = []
     warnings: list[str] = []

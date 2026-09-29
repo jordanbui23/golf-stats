@@ -151,3 +151,9 @@ def test_values_that_could_all_be_thousands_groups_are_refused():
     rows = [["5/6/2026 6:58:02 PM", "7 Iron", "82", '"5,491"'], ["5/6/2026 6:59:02 PM", "7 Iron", "81", '"5,402"']]
     with pytest.raises(ParseError, match="thousands"):
         parse_tps_csv(tiny_csv(HEADER, UNITS, rows))
+
+
+def test_a_column_of_possible_thousands_groups_is_refused_even_when_other_columns_set_the_mark():
+    rows = [["14.10.2026 18:03:11", "7 Iron", "82,5", "5,491"], ["14.10.2026 18:04:11", "7 Iron", "81,25", "5,402"]]
+    with pytest.raises(ParseError, match="Spin Rate.*thousands"):
+        parse_tps_csv(tiny_csv(HEADER, UNITS, rows, sep=";"))

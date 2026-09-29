@@ -196,3 +196,15 @@ def test_replacing_an_earlier_session_refreshes_later_reports(cfg_file, tmp_path
     assert main(["--config", str(cfg_file), "ingest", "--replace"]) == 0
     assert "Refreshed 1 later report(s)" in capsys.readouterr().out
     assert "## Last plan" in later.read_text()
+
+
+def test_pending_conflicts_are_rechecked_once_another_file_resolves_them(tmp_path):
+    conn = connect(tmp_path / "golf.db")
+    first = write_export(tmp_path / "in", "a.csv", seed=1)
+    ingest_file(conn, first, tmp_path / "raw")
+    b = write_conflicting(tmp_path / "in", "b.csv", first)
+    assert len(ingest_file(conn, b, tmp_path / "raw").conflicts) == 20
+    c = tmp_path / "in" / "c.csv"
+    c.write_bytes(b.read_bytes() + b"\r\n")
+    ingest_file(conn, c, tmp_path / "raw", replace=True)
+    assert ingest_file(conn, b, tmp_path / "raw").conflicts == []

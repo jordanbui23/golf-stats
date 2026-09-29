@@ -23,7 +23,7 @@ takes the new file's values. Replacing an earlier session also refreshes the rep
 sessions, because their comparisons and plan grades depend on it.
 A file that fails to parse stays in the inbox and the error names the line, column or unit at
 fault. A number the parser cannot read unambiguously fails the whole file rather than becoming
-a gap: a thousands separator, both `.` and `,` used as a decimal mark in one file, or a file
+a gap: a thousands separator, both `.` and `,` used as a decimal mark in one file, or a column
 whose every decimal value has exactly three digits after the mark.
 Only the inbox's own entries are deleted. A file passed by path from elsewhere, or the target
 of a symlink placed in the inbox, is never deleted.
