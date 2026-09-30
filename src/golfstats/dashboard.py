@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
@@ -19,7 +20,8 @@ TREND_METRICS = (
     ("carry", "median"), ("carry", "sd"), ("carry_side", "sd"), ("face_to_path", "median"),
     ("face_to_path", "sd"), ("face_angle", "median"), ("face_angle", "sd"), ("club_path", "median"),
     ("club_speed", "median"), ("smash_index", "median"), ("attack_angle", "median"), ("low_point", "median"),
-    ("impact_offset", "sd"), ("spin_rate", "median"),
+    ("impact_offset", "sd"), ("spin_rate", "median"), ("launch_direction", "median"),
+    ("launch_direction", "sd"), ("curve", "median"), ("curve", "sd"),
 )
 
 
@@ -35,7 +37,7 @@ def _club_block(shots: list[dict]) -> dict:
     return {"n": c["n"], "n_total": c["n_total"], "metrics": metrics, "shapes": c["shapes"], "sides": sides}
 
 
-def build_data(sessions: list[Session], cfg: Config) -> dict:
+def build_data(sessions: list[Session], cfg: Config, player: str = "") -> dict:
     out_sessions, shots = [], []
     for idx, sess in enumerate(sessions):
         plan = plan_for(sess, sessions, cfg.plans)
@@ -51,24 +53,42 @@ def build_data(sessions: list[Session], cfg: Config) -> dict:
                           s["ts"].strftime("%H:%M:%S"), *(_round(s.get(k)) for k in SHOT_COLUMNS)])
     return {
         "generated": datetime.now().isoformat(timespec="seconds"),
+        "player": player,
+        "min_shots": cfg.min_shots,
         "shot_columns": ["session", "club", "use", "shape", "time", *SHOT_COLUMNS],
         "labels": {k: {"label": f.label, "unit": f.unit} for k, f in FIELDS_BY_KEY.items()},
         "trend_metrics": [list(t) for t in TREND_METRICS],
-        "windows": {"face_to_path": list(cfg.face_to_path_window), "face_angle": list(cfg.face_window)},
+        "windows": {"face_to_path": list(cfg.face_to_path_window), "face_angle": list(cfg.face_window),
+                    "launch_direction": list(cfg.face_window)},
         "sessions": out_sessions,
         "shots": shots,
     }
 
 
-def render_dashboard(sessions: list[Session], cfg: Config) -> str:
+def render_dashboard(sessions: list[Session], cfg: Config, player: str = "") -> str:
     template = files("golfstats").joinpath("dashboard.html").read_text()
-    payload = json.dumps(build_data(sessions, cfg), separators=(",", ":"))
+    payload = json.dumps(build_data(sessions, cfg, player), separators=(",", ":"))
     payload = payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     return template.replace("/*__DATA__*/null", payload)
 
 
-def write_dashboard(sessions: list[Session], cfg: Config, path: Path | None = None) -> Path:
-    path = path or cfg.dashboard
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_dashboard(sessions, cfg))
-    return path
+def player_slug(player: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", player.lower()).strip("-") or "player"
+
+
+def write_dashboards(sessions: list[Session], cfg: Config) -> list[tuple[str, Path]]:
+    by_player: dict[str, list[Session]] = {}
+    for sess in sessions:
+        by_player.setdefault(sess.player, []).append(sess)
+    written, used = [], set()
+    for player in sorted(by_player, key=lambda p: (p.lower(), p)):
+        slug = base = player_slug(player)
+        suffix = 2
+        while slug in used:
+            slug, suffix = f"{base}-{suffix}", suffix + 1
+        used.add(slug)
+        path = cfg.dashboard_path(slug)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render_dashboard(by_player[player], cfg, player))
+        written.append((player, path))
+    return written

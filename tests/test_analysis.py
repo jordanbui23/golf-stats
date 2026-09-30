@@ -163,3 +163,44 @@ def test_unknown_club_names_cannot_carry_markup():
     code = club_code('<img src=x onerror="alert(1)">')
     assert not set(code) & set('<>"=()')
     assert club_code("56° Wedge") == "56°" and club_code("Pitching Wedge") == "PW" and club_code("4 Hybrid") == "4H"
+
+
+def sparse(n: int = 30, every: int = 5, **club_data) -> list[dict]:
+    out = []
+    for s in iron_shots(n, launch_direction=lambda i: (i % 5 - 2) * 1.5):
+        if s["ts"].minute % every:
+            for k in ("low_point", "smash_index", "impact_offset", "face_angle", "club_path", "face_to_path", "curve"):
+                s[k] = None
+        else:
+            s.update({k: (v(s) if callable(v) else v) for k, v in club_data.items()})
+        out.append(s)
+    return out
+
+
+def test_club_data_on_too_few_shots_never_drives_the_focus():
+    shots = sparse(low_point=-2.0, face_angle=6.0, face_to_path=9.0)
+    f = pick_focus(session(shots), cfg())
+    assert f["metric"] == "launch_direction"
+    assert "measured on only 6 of 30 shots" in f["reason"]
+
+
+def test_the_same_club_data_on_enough_shots_does_drive_it():
+    shots = sparse(every=1, low_point=-2.0)
+    assert pick_focus(session(shots), cfg())["metric"] == "low_point"
+
+
+def test_sparse_club_data_checks_start_line_with_launch_direction():
+    shots = sparse(launch_direction=None)
+    for s in shots:
+        s["launch_direction"] = 4.0 + (s["ts"].minute % 3) * 0.2
+    f = pick_focus(session(shots), cfg())
+    assert f["metric"] == "launch_direction" and f["window"] == [-2.0, 2.0]
+    assert f["today"]["n"] == 30 and f["today"]["hits"] == 0
+
+
+def test_sparse_club_data_holds_on_launch_direction_when_it_is_in_window():
+    shots = sparse()
+    for s in shots:
+        s["launch_direction"] = (s["ts"].minute % 3 - 1) * 0.3
+    f = pick_focus(session(shots), cfg())
+    assert f["metric"] == "launch_direction" and "inside its window" in f["reason"]

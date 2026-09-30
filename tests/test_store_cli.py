@@ -102,7 +102,7 @@ def test_cli_ingest_writes_report_plan_and_dashboard_then_grades_next_session(cf
     assert [r.stem for r in reports] == ["2026-10-01-1800", "2026-10-08-1800"]
     second = reports[1].read_text()
     assert "## Last plan" in second and "## Compared with the previous 1 session(s)" in second
-    html = cfg.dashboard.read_text()
+    html = cfg.dashboard_path("demo").read_text()
     assert "/*__DATA__*/null" not in html and '"sessions":[' in html and "NaN" not in html
 
 
@@ -208,3 +208,23 @@ def test_pending_conflicts_are_rechecked_once_another_file_resolves_them(tmp_pat
     c.write_bytes(b.read_bytes() + b"\r\n")
     ingest_file(conn, c, tmp_path / "raw", replace=True)
     assert ingest_file(conn, b, tmp_path / "raw").conflicts == []
+
+
+def test_each_player_gets_a_dashboard_with_only_their_sessions(cfg_file, capsys):
+    cfg = load_config(cfg_file)
+    write_export(cfg.inbox, "a.csv", player="Jordan", plan=[("7 Iron", 24)])
+    write_export(cfg.inbox, "b.csv", player="Christian", seed=2, plan=[("7 Iron", 24)])
+    assert main(["--config", str(cfg_file), "ingest"]) == 0
+    out = capsys.readouterr().out
+    assert "(Jordan)" in out and "(Christian)" in out and out.count("Next focus:") == 2
+    mine, his = cfg.dashboard_path("jordan").read_text(), cfg.dashboard_path("christian").read_text()
+    assert '"player":"Jordan"' in mine and '"player":"Christian"' not in mine
+    assert '"player":"Christian"' in his and '"player":"Jordan"' not in his
+
+
+def test_player_names_that_share_a_file_name_get_separate_dashboards(cfg_file):
+    cfg = load_config(cfg_file)
+    write_export(cfg.inbox, "a.csv", player="Jo Bui")
+    write_export(cfg.inbox, "b.csv", player="jo-bui", seed=2)
+    main(["--config", str(cfg_file), "ingest"])
+    assert cfg.dashboard_path("jo-bui").exists() and cfg.dashboard_path("jo-bui-2").exists()

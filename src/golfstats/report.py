@@ -13,6 +13,8 @@ _TABLE = (
     ("Path", "club_path", 1, True, True),
     ("Face", "face_angle", 1, True, True),
     ("F2P", "face_to_path", 1, True, True),
+    ("Start", "launch_direction", 1, True, True),
+    ("Curve", "curve", 1, True, True),
     ("Launch", "launch_angle", 1, False, False),
     ("Spin", "spin_rate", 0, False, False),
     ("Low pt", "low_point", 1, True, False),
@@ -29,12 +31,21 @@ _TREND = (
 )
 
 
-def _cell(summary: dict | None, digits: int, signed: bool, with_sd: bool) -> str:
+SPREAD_MIN_N = 5
+
+
+def unit_suffix(unit: str) -> str:
+    return "°" if unit == "deg" else unit if unit == "%" else f" {unit}" if unit else ""
+
+
+def _cell(summary: dict | None, digits: int, signed: bool, with_sd: bool, club_n: int) -> str:
     if not summary:
         return "–"
     text = fmt(summary["median"], digits, signed)
-    if with_sd and summary["sd"] is not None:
+    if with_sd and summary["sd"] is not None and summary["n"] >= SPREAD_MIN_N:
         text += f" ±{summary['sd']:.{digits}f}"
+    if summary["n"] < club_n:
+        text += f" ({summary['n']})"
     return text
 
 
@@ -53,7 +64,12 @@ def _warnings(session: Session, summ: dict) -> list[str]:
         out.append(f"Spin was estimated, not measured, on {len(est)} of {len(counted)} shots. RCT balls fix this.")
     no_face = [s for s in counted if s.get("face_angle") is None]
     if no_face:
-        out.append(f"Club data (face, face to path, loft) is missing on {len(no_face)} of {len(counted)} shots.")
+        out.append(f"Club data (face, path, face to path, attack angle, low point, spin axis) is missing on "
+                   f"{len(no_face)} of {len(counted)} shots. Without a spin axis TrackMan draws those flights "
+                   "straight, so their side is start line only and their curve is unknown. A check that needs "
+                   "club data runs only with at least `focus.min_shots` measured values. Otherwise start line "
+                   "is checked with launch direction.")
+
     no_impact = [s for s in counted if s.get("impact_offset") is None]
     if no_impact and len(no_impact) == len(counted):
         out.append("No impact location on any shot. Check that OERT is on and the hitting area is lit.")
@@ -81,7 +97,7 @@ def render_report(session: Session, history: list[Session], focus: dict | None, 
     lines += ["## Focus for next session", ""]
     if focus:
         lo, hi = focus["window"]
-        unit = "°" if focus["unit"] == "deg" else f" {focus['unit']}"
+        unit = unit_suffix(focus["unit"])
         window = f"at least {lo:.0f}{unit}" if hi >= 200 else f"between {lo:+g}{unit} and {hi:+g}{unit}"
         t = focus["today"]
         lines += [
@@ -109,11 +125,13 @@ def render_report(session: Session, history: list[Session], focus: dict | None, 
         lines.append("")
 
     lines += ["## By club", "", "Medians, with ± a robust spread (1.4826 × MAD). Distances in yds, angles in °, "
-              "speeds in mph, spin in rpm, low point in inches (+ is ahead of the ball).", ""]
+              "speeds in mph, spin in rpm, low point in inches (+ is ahead of the ball). Start is launch "
+              "direction. A number in brackets is how many shots had that value, when fewer than all. "
+              f"The spread needs at least {SPREAD_MIN_N}.", ""]
     lines.append("| Club | Shots | " + " | ".join(h for h, *_ in _TABLE) + " |")
     lines.append("|---|---|" + "---|" * len(_TABLE))
     for code, c in summ.items():
-        cells = [_cell(c["metrics"][k], d, sg, sd) for _, k, d, sg, sd in _TABLE]
+        cells = [_cell(c["metrics"][k], d, sg, sd, c["n"]) for _, k, d, sg, sd in _TABLE]
         lines.append(f"| {code} | {c['n']} | " + " | ".join(cells) + " |")
     lines.append("")
 
@@ -123,8 +141,8 @@ def render_report(session: Session, history: list[Session], focus: dict | None, 
         sides = c["sides"]
         split = ""
         if sides:
-            split = (f" Side miss ±{sides['side_sd'] or 0:.1f} yds: start line ±{sides['start_sd']:.1f}, "
-                     f"curve ±{sides['curve_sd']:.1f} ({sides['dominant']} dominates).")
+            split = (f" On the {sides['n']} shots with curve, side miss ±{sides['side_sd'] or 0:.1f} yds: start "
+                     f"line ±{sides['start_sd']:.1f}, curve ±{sides['curve_sd']:.1f} ({sides['dominant']} dominates).")
         lines.append(f"- **{code}**: {shapes}.{split}")
     lines.append("")
 

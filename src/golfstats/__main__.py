@@ -5,9 +5,9 @@ import sys
 from pathlib import Path
 
 from .config import Config, load_config
-from .dashboard import write_dashboard
+from .dashboard import write_dashboards
 from .focus import grade_plan, make_plan, pick_focus, plan_for, save_plan
-from .report import render_report
+from .report import render_report, unit_suffix
 from .stats import Session, split_sessions
 from .store import connect, ingest_file, load_shots
 from .synth import demo_exports
@@ -47,9 +47,15 @@ def _focus_line(focus: dict | None) -> str:
         return "Next focus: none yet (not enough shots with one club)."
     lo, hi = focus["window"]
     t = focus["today"]
-    window = f">= {lo:g}" if hi >= 200 else f"{lo:+g} to {hi:+g}"
-    return (f"Next focus: {focus['club']} {focus['label'].lower()} {window} {focus['unit']}"
+    unit = unit_suffix(focus["unit"])
+    window = f"at least {lo:g}{unit}" if hi >= 200 else f"{lo:+g}{unit} to {hi:+g}{unit}"
+    return (f"Next focus: {focus['club']} {focus['label'].lower()} {window}"
             f" (today {t['hits']} of {t['n']} in window).")
+
+
+def _print_dashboards(sessions: list[Session], cfg: Config) -> None:
+    for player, path in write_dashboards(sessions, cfg):
+        print(f"Dashboard{f' ({player})' if player else ''}: {_rel(path)}")
 
 
 def in_inbox(path: Path, inbox: Path) -> bool:
@@ -102,7 +108,9 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
     touched = [s for s in sessions if any(sh["import_id"] in new_imports for sh in s.shots)]
     for sess in touched:
         path, focus = _write_report(sess, sessions, cfg, save=True)
-        print(f"Session {sess.id}: {len(sess.counted)} counted shots. Report {_rel(path)}")
+        who = f" ({sess.player})" if sess.player else ""
+        print(f"Session {sess.id}{who}: {len(sess.counted)} counted shots. Report {_rel(path)}")
+        print(f"  {_focus_line(focus)}")
     touched_ids = {s.id for s in touched}
     later = [s for s in sessions
              if s.id not in touched_ids and any(s.player == t.player and s.start > t.start for t in touched)]
@@ -110,10 +118,7 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
         _write_report(sess, sessions, cfg, save=False)
     if later:
         print(f"Refreshed {len(later)} later report(s) whose comparisons or plan grades depend on these sessions.")
-    if touched:
-        print(_focus_line(pick_focus(touched[-1], cfg)))
-    if sessions:
-        print(f"Dashboard: {_rel(write_dashboard(sessions, cfg))}")
+    _print_dashboards(sessions, cfg)
     return 1 if failed else 0
 
 
@@ -140,7 +145,10 @@ def cmd_sessions(args: argparse.Namespace, cfg: Config) -> int:
 
 def cmd_dashboard(args: argparse.Namespace, cfg: Config) -> int:
     sessions = _sessions(cfg)
-    print(f"Dashboard: {_rel(write_dashboard(sessions, cfg))} ({len(sessions)} sessions)")
+    if not sessions:
+        print("No sessions yet. Run `bin/golf ingest` first.")
+        return 1
+    _print_dashboards(sessions, cfg)
     return 0
 
 
@@ -169,7 +177,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("session", nargs="?")
     p.set_defaults(func=cmd_report)
     sub.add_parser("sessions", help="list sessions").set_defaults(func=cmd_sessions)
-    sub.add_parser("dashboard", help="rebuild data/dashboard.html").set_defaults(func=cmd_dashboard)
+    sub.add_parser("dashboard", help="rebuild data/dashboard-<player>.html, one per player").set_defaults(
+        func=cmd_dashboard)
     sub.add_parser("demo", help="build a dashboard from synthetic sessions in data/demo").set_defaults(func=cmd_demo)
     args = parser.parse_args(argv)
     return args.func(args, load_config(args.config))

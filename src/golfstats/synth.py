@@ -77,8 +77,15 @@ def synth_shot(rng: random.Random, club: ClubModel, face_bias: float, path_bias:
     }
 
 
+CLUB_DATA_HEADERS = (
+    "Attack Angle", "Club Path", "Low Point", "Dyn. Loft", "Face Angle", "Face To Path", "Spin Axis", "Curve",
+    "Dynamic Lie", "Impact Offset", "Impact Height", "Spin Loft", "Swing Radius", "Low Point Height",
+    "Low Point Side", "D Plane Tilt", "Smash Index",
+)
+
+
 def _row(ts: datetime, player: str, club: ClubModel, v: dict, use: bool, estimated: bool,
-         drop_club_data: bool) -> list[str]:
+         drop_club_data: bool, no_club_data: bool = False) -> list[str]:
     def n(x: float) -> str:
         return repr(float(x))
 
@@ -107,11 +114,14 @@ def _row(ts: datetime, player: str, club: ClubModel, v: dict, use: bool, estimat
     })
     if not drop_club_data:
         row.update({"Dyn. Loft": n(v["loft"]), "Face Angle": n(v["face"]), "Face To Path": n(v["f2p"])})
+    if no_club_data:
+        row.update({h: "" for h in CLUB_DATA_HEADERS})
+        row["Carry Flat - Side"] = n(v["carry"] * math.tan(math.radians(v["launch_dir"])))
     return [row[h] for h in TPS_HEADER]
 
 
 def synth_session_csv(start: datetime, plan: list[tuple[str, int]], face_bias: float, path_bias: float,
-                      seed: int, player: str = "Demo", strike_sd: float = 6.0) -> str:
+                      seed: int, player: str = "Demo", strike_sd: float = 6.0, club_data_every: int = 1) -> str:
     rng = random.Random(seed)
     buf = io.StringIO()
     buf.write("\ufeffsep=,\r\n")
@@ -124,7 +134,7 @@ def synth_session_csv(start: datetime, plan: list[tuple[str, int]], face_bias: f
         for i in range(count):
             v = synth_shot(rng, club, face_bias, path_bias, strike_sd)
             w.writerow(_row(ts, player, club, v, use=(i % 17 != 16), estimated=(i % 11 == 10),
-                            drop_club_data=(i % 23 == 22)))
+                            drop_club_data=(i % 23 == 22), no_club_data=(i % club_data_every != 0)))
             ts += timedelta(seconds=rng.randint(35, 70))
     return buf.getvalue()
 

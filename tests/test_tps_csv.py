@@ -157,3 +157,16 @@ def test_a_column_of_possible_thousands_groups_is_refused_even_when_other_column
     rows = [["14.10.2026 18:03:11", "7 Iron", "82,5", "5,491"], ["14.10.2026 18:04:11", "7 Iron", "81,25", "5,402"]]
     with pytest.raises(ParseError, match="Spin Rate.*thousands"):
         parse_tps_csv(tiny_csv(HEADER, UNITS, rows, sep=";"))
+
+
+def test_a_second_byte_order_mark_is_ignored():
+    parsed = parse_tps_csv("\ufeff" + export())
+    assert len(parsed.shots) == 20 and parsed.shots[0]["club"] == "7 Iron"
+
+
+def test_sparse_club_data_leaves_those_columns_blank_and_the_flight_straight():
+    shots = parse_tps_csv(export(club_data_every=4)).shots
+    blank = [s for i, s in enumerate(shots) if i % 4]
+    assert blank and all(s.get("face_angle") is None and s.get("spin_axis") is None for s in blank)
+    for s in blank:
+        assert s["carry_side"] == pytest.approx(s["carry"] * math.tan(math.radians(s["launch_direction"])), abs=1e-6)

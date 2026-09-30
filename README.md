@@ -11,7 +11,9 @@ and no account.
    unchecked, Export All. Save it to a USB stick.
 2. Copy the file into `data/inbox/`, for example `scp session.csv cloud:~/projects/golf-stats/data/inbox/`.
 3. Run `bin/golf ingest`.
-4. Open `data/dashboard.html`. The report for the session is in `data/reports/`.
+4. Open `data/dashboard-<player>.html`, one per player in the export, for example
+   `data/dashboard-jordan.html`. Each file holds only that player's sessions, so it can be sent
+   to them on its own. The report for each session is in `data/reports/`.
 
 Ingest archives each export byte for byte in `data/raw/`, removes it from the inbox, skips a
 file it has seen, and skips shots already stored, so exporting the whole library again is safe.
@@ -35,7 +37,7 @@ of a symlink placed in the inbox, is never deleted.
 | `bin/golf ingest [files...] [--replace]` | Import exports (default: everything in `data/inbox`), write reports and plans for the sessions they touch, rebuild the dashboard. `--replace` overwrites stored shots whose values differ |
 | `bin/golf report [session]` | Print the report for a session (default: the latest) |
 | `bin/golf sessions` | List sessions |
-| `bin/golf dashboard` | Rebuild `data/dashboard.html` |
+| `bin/golf dashboard` | Rebuild `data/dashboard-<player>.html` for every player |
 | `bin/golf demo` | Build a dashboard from four synthetic sessions in `data/demo/` |
 
 ## How the focus is picked
@@ -50,7 +52,14 @@ The focus picker looks at the club with the most counted shots, once it has at l
    and curve (driven by face to path). Whichever spread is larger is checked first against
    its window.
 
-If every check passes, it keeps face to path as the target so the pattern has to repeat.
+A check that needs club data runs only when the club has at least `focus.min_shots` measured
+values of it. Indoors TrackMan often drops club data on most shots (see `docs/TRACKMAN.md`).
+Then start line is checked with launch direction, which is measured on every shot, and curve
+is not checked, because TrackMan draws those flights straight. The report and dashboard show
+how many shots each number came from when it is fewer than all.
+
+If every check passes, it keeps face to path as the target so the pattern has to repeat, or
+launch direction when club data is too sparse.
 The chosen target becomes a plan in `data/plans/`. The same player's next session grades it:
 how many of the planned shots landed in the window, against the count when it was set. A
 session with no plan of its own breaks the chain, so an older plan is never graded twice.
@@ -76,7 +85,7 @@ src/golfstats/
   dashboard.html          dashboard template (vanilla JS, inline SVG, works offline)
   synth.py                synthetic TPS exports for tests and the demo
 tests/                    pytest suite, offline
-data/                     gitignored: golf.db, inbox/, raw/, reports/, plans/, dashboard.html
+data/                     gitignored: golf.db, inbox/, raw/, reports/, plans/, dashboard-<player>.html
 ```
 
 Data flow: CSV, then `tps_csv` converts every value to mph, yds, ft, in, mm, deg and rpm by
@@ -99,6 +108,8 @@ build on this box's compiler.
 
 - Indoors the radar tracks about 3 yds of flight, so carry, side and curve are TrackMan's
   predictions from launch and spin. The club numbers and launch numbers are measured.
-- The export format comes from one real TPS export by another golfer. The first export from
-  this unit is the real test. See `docs/TRACKMAN.md`.
+- The export format matches two real TPS exports: one by another golfer and the first from
+  this unit. See `docs/TRACKMAN.md`.
+- On this unit most shots have no club data, so strike checks and curve checks often have too
+  few values to run.
 - Right-handed only. The heel/toe sign of impact offset is unverified.

@@ -15,6 +15,7 @@
            padding: 12px 20px; background: rgba(11, 18, 16, .92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
   h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .02em; }
   h1 span { color: var(--accent); }
+  .who { font-weight: 650; margin-right: 4px; }
   select { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { border: 1px solid var(--line); background: var(--card); color: var(--muted); border-radius: 999px; padding: 4px 12px; cursor: pointer; font: inherit; }
@@ -68,6 +69,7 @@
 <body>
 <header>
   <h1>Golf <span>stats</span></h1>
+  <div class="who" id="who"></div>
   <select id="session" aria-label="Session"></select>
   <div class="chips" id="clubs"></div>
 </header>
@@ -83,6 +85,7 @@
     <section class="card">
       <h2>Face and path</h2>
       <p class="sub">Face sets start line, face minus path sets curve. Green band is your face to path window.</p>
+      <p class="sub" id="dplaneNote" style="margin:0"></p>
       <svg id="dplane"></svg>
       <div class="legend"><span><i style="background:rgba(52,211,153,.25)"></i>face to path window</span><span><i style="background:rgba(96,165,250,.25)"></i>face window</span></div>
     </section>
@@ -138,7 +141,8 @@
     return (signed && r > 0 ? "+" : "") + r.toFixed(d);
   };
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
-  const unitText = (u) => u === "deg" ? "°" : u ? " " + u : "";
+  const unitText = (u) => u === "deg" ? "°" : u === "%" ? "%" : u ? " " + u : "";
+  const SPREAD_MIN_N = 5;
   const el = (tag, attrs = {}, parent) => {
     const n = document.createElementNS(NS, tag);
     for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
@@ -235,7 +239,7 @@
       html += `<div><h2>Next session focus</h2><div class="headline">${esc(f.club)}: ${esc(f.label.toLowerCase())} ${windowText(f)}</div><p class="reason">${esc(f.reason)}</p></div>`;
       html += `<div class="side"><div class="sub" style="margin:0">In window this session</div><div class="headline" style="margin:2px 0 0">${t.hits} <span style="color:var(--muted);font-size:14px">of ${t.n} (${pct}%)</span></div><div class="meter"><div style="width:${pct}%"></div></div><div class="sub" style="margin:0">median ${fmt(t.median, 1, true)}${unitText(f.unit)}, spread ±${fmt(t.sd)}</div></div>`;
     } else {
-      html += `<div><h2>Next session focus</h2><div class="headline">Not enough shots yet</div><p class="reason">Hit at least ${8} counted shots with one club so the checks have data.</p></div>`;
+      html += `<div><h2>Next session focus</h2><div class="headline">Not enough shots yet</div><p class="reason">Hit at least ${DATA.min_shots} counted shots with one club so the checks have data.</p></div>`;
     }
     if (sess.grades && sess.grades.length) {
       html += `<div class="grade" style="grid-column:1/-1">` + sess.grades.map((g) => {
@@ -260,13 +264,16 @@
       ["Face angle", "face_angle", "median", 1, true, "°"], ["Club path", "club_path", "median", 1, true, "°"],
       ["Club speed", "club_speed", "median", 1, false, "mph"], ["Smash index", "smash_index", "median", 0, false, "%"],
       ["Attack angle", "attack_angle", "median", 1, true, "°"], ["Low point", "low_point", "median", 1, true, "in"],
+      ["Start (launch dir.)", "launch_direction", "median", 1, true, "°"], ["Curve", "curve", "median", 1, true, "yds"],
     ];
     $("kpis").innerHTML = tiles.map(([name, key, stat, d, signed, u]) => {
       const m = c.metrics[key];
       if (!m) return "";
-      const v = m[stat], spread = stat === "median" && m.sd != null ? `<small>±${fmt(m.sd, d)}</small>` : "";
+      if (stat === "sd" && m.n < SPREAD_MIN_N) return "";
+      const v = m[stat], spread = stat === "median" && m.sd != null && m.n >= SPREAD_MIN_N ? `<small>±${fmt(m.sd, d)}</small>` : "";
       const pv = prev && prev.metrics[key] ? prev.metrics[key][stat] : null;
-      const delta = v != null && pv != null ? `${fmt(v - pv, d, true)} vs last` : "&nbsp;";
+      const few = m.n < c.n ? `${m.n} of ${c.n} shots` : "";
+      const delta = [v != null && pv != null ? `${fmt(v - pv, d, true)} vs last` : "", few].filter(Boolean).join(" · ") || "&nbsp;";
       return `<div class="kpi"><div class="k">${name}</div><div class="v">${fmt(v, d, signed)}<small>${u}</small>${spread}</div><div class="d">${delta}</div></div>`;
     }).join("");
   }
@@ -294,7 +301,9 @@
   }
 
   function renderDplane() {
-    const rows = shots(state.session, state.club).filter((r) => r[C.face_angle] != null && r[C.club_path] != null);
+    const all = shots(state.session, state.club);
+    const rows = all.filter((r) => r[C.face_angle] != null && r[C.club_path] != null);
+    $("dplaneNote").textContent = rows.length < all.length ? `Club data on ${rows.length} of ${all.length} shots.` : "";
     const lim = symmetric([...col(rows, "face_angle"), ...col(rows, "club_path")], 6)[1];
     const f = frame($("dplane"), { x: [-lim, lim], y: [-lim, lim], xLabel: "club path (°, + is in-to-out)", yLabel: "face angle (°, + is open)", zeroX: true, zeroY: true, h: 340 });
     const [flo, fhi] = DATA.windows.face_angle, [plo, phi] = DATA.windows.face_to_path;
@@ -333,7 +342,8 @@
     $("miss").innerHTML = entries.map(([code, c]) => {
       const s = c.sides, on = code === state.club;
       const bar = (v, color) => `<div class="bar-line"><div class="bar" style="width:${Math.max(2, 70 * v / max)}%;background:${color}"></div>±${fmt(v)} yds</div>`;
-      return `<div class="miss-row" style="opacity:${on ? 1 : .55}"><b style="color:${colorOf(code)}">${esc(code)}</b><div>${bar(s.start_sd, "#60a5fa")}${bar(s.curve_sd, "#34d399")}</div></div>`;
+      const few = s.n < c.n ? `<div class="bar-line">on ${s.n} of ${c.n} shots (the ones with club data)</div>` : "";
+      return `<div class="miss-row" style="opacity:${on ? 1 : .55}"><b style="color:${colorOf(code)}">${esc(code)}</b><div>${bar(s.start_sd, "#60a5fa")}${bar(s.curve_sd, "#34d399")}${few}</div></div>`;
     }).join("") + `<div class="legend"><span><i style="background:#60a5fa"></i>start line (face)</span><span><i style="background:#34d399"></i>curve (face to path)</span></div>`
       + (shapes.length ? `<div class="shapes"><span class="sub" style="margin:0 4px 0 0">${esc(state.club)} shapes</span>${shapes.map(([k, v]) => `<span class="shape">${esc(k)}<b>${v}</b></span>`).join("")}</div>` : "");
   }
@@ -347,7 +357,8 @@
         o.textContent = `${LBL[key].label} ${stat === "sd" ? "spread" : "median"}`;
         sel.appendChild(o);
       }
-      sel.value = "face_to_path|median";
+      const last = S[S.length - 1].focus, want = last ? `${last.metric}|median` : "";
+      sel.value = [...sel.options].some((o) => o.value === want) ? want : "face_to_path|median";
       sel.onchange = renderTrend;
     }
     const [key, stat] = sel.value.split("|");
@@ -374,7 +385,8 @@
     const rows = shots(state.session, state.club, true);
     const cols = [["Time", "time"], ["Club", "club"], ["Shape", "shape"], ["Carry", "carry", 0], ["Side", "carry_side", 1, true],
       ["Club spd", "club_speed", 1], ["Smash", "smash_factor", 2], ["Face", "face_angle", 1, true], ["Path", "club_path", 1, true],
-      ["F2P", "face_to_path", 1, true], ["Launch", "launch_angle", 1], ["Spin", "spin_rate", 0], ["Axis", "spin_axis", 1, true],
+      ["F2P", "face_to_path", 1, true], ["Start", "launch_direction", 1, true], ["Curve", "curve", 1, true],
+      ["Launch", "launch_angle", 1], ["Spin", "spin_rate", 0], ["Axis", "spin_axis", 1, true],
       ["AoA", "attack_angle", 1, true], ["Low pt", "low_point", 1, true], ["Offset", "impact_offset", 0, true], ["Height", "impact_height", 0, true]];
     const head = `<tr>${cols.map(([h]) => `<th>${h}</th>`).join("")}</tr>`;
     const body = rows.map((r) => `<tr class="${r[C.use] ? "" : "out"}">${cols.map(([, k, d, sg]) => `<td>${d == null ? esc(r[C[k]] ?? "–") : fmt(r[C[k]], d, sg)}</td>`).join("")}</tr>`).join("");
@@ -395,6 +407,7 @@
     renderTable();
   }
 
+  if (DATA && DATA.player) { $("who").textContent = DATA.player; document.title = `Golf stats · ${DATA.player}`; }
   if (!S.length) { $("app").innerHTML = `<div class="empty">No sessions yet. Drop a TrackMan CSV in data/inbox and run <code>bin/golf ingest</code>.</div>`; return; }
   renderSessionSelect();
   render();

@@ -55,67 +55,90 @@ def _focus(club: str, metric: str, window: tuple[float, float], shots: list[dict
     }
 
 
+def _enough(summary: dict | None, cfg: Config) -> bool:
+    return bool(summary) and summary["n"] >= cfg.min_shots
+
+
+def _outside(summary: dict, window: tuple[float, float]) -> bool:
+    return not in_window(summary["median"], window) or (summary["sd"] or 0) > (window[1] - window[0]) / 2
+
+
+def _window_text(window: tuple[float, float], unit: str) -> str:
+    u = "°" if unit == "deg" else f" {unit}"
+    return f"window {window[0]:+.0f}{u} to {window[1]:+.0f}{u}"
+
+
+def _club_data_note(m: dict, key: str, n: int) -> str:
+    have = m[key]["n"] if m[key] else 0
+    return f"{FIELDS_BY_KEY[key].label} was measured on only {have} of {n} shots, so this uses "
+
+
 def pick_focus(session: Session, cfg: Config) -> dict | None:
     club = primary_club(session, cfg)
     if club is None:
         return None
     shots = [s for s in session.shots if s["club_code"] == club and s["use_in_stat"]]
     summ = club_summary(shots)
-    m = summ["metrics"]
+    m, n = summ["metrics"], summ["n"]
 
-    lp_behind = summ["low_point_behind_share"]
-    if is_iron_or_wedge(club) and lp_behind is not None and lp_behind > cfg.low_point_behind_share:
-        n_lp = len(values(shots, "low_point"))
-        behind = round(lp_behind * n_lp)
+    lp, lp_behind = m["low_point"], summ["low_point_behind_share"]
+    if is_iron_or_wedge(club) and _enough(lp, cfg) and lp_behind > cfg.low_point_behind_share:
+        behind = round(lp_behind * lp["n"])
         return _focus(club, "low_point", LOW_POINT_WINDOW, shots,
-                      f"The club bottomed out at or behind the ball on {behind} of {n_lp} shots "
-                      f"(median low point {fmt(m['low_point']['median'], 1, True)} in). "
+                      f"The club bottomed out at or behind the ball on {behind} of {lp['n']} shots "
+                      f"(median low point {fmt(lp['median'], 1, True)} in). "
                       "Strike comes before direction.")
 
     si = m["smash_index"]
-    if si and si["median"] < cfg.smash_index_min:
+    if _enough(si, cfg) and si["median"] < cfg.smash_index_min:
         return _focus(club, "smash_index", (cfg.smash_index_min, 200.0), shots,
                       f"Median smash index {si['median']:.0f}% (target {cfg.smash_index_min:.0f}% or more). "
                       "Contact is costing ball speed.")
 
     off = m["impact_offset"]
-    if off and off["sd"] is not None and off["sd"] > cfg.impact_offset_spread_mm:
+    if _enough(off, cfg) and off["sd"] is not None and off["sd"] > cfg.impact_offset_spread_mm:
         t = cfg.impact_offset_spread_mm
         return _focus(club, "impact_offset", (-t, t), shots,
                       f"Heel-to-toe impact spread is ±{off['sd']:.0f} mm (target ±{t:.0f} mm), "
                       f"median {off['median']:+.0f} mm.")
 
     f2p_w, face_w = cfg.face_to_path_window, cfg.face_window
-    sides = summ["sides"]
-    f2p, face, path = m["face_to_path"], m["face_angle"], m["club_path"]
+    sides = summ["sides"] if summ["sides"] and summ["sides"]["n"] >= cfg.min_shots else None
+    path = m["club_path"] if _enough(m["club_path"], cfg) else None
+    curve = m["face_to_path"] if _enough(m["face_to_path"], cfg) else None
+    start_metric = "face_angle" if _enough(m["face_angle"], cfg) else "launch_direction"
+    start = m[start_metric]
+
     checks = []
-    if f2p:
-        f2p_bad = not in_window(f2p["median"], f2p_w) or (f2p["sd"] or 0) > (f2p_w[1] - f2p_w[0]) / 2
-        if f2p_bad:
-            spread = (f"Curve explains more of the side miss than start line (curve ±{sides['curve_sd']:.1f} yds, "
-                      f"start ±{sides['start_sd']:.1f} yds). " if sides and sides["dominant"] == "curve" else "")
-            checks.append(("curve", _focus(
-                club, "face_to_path", f2p_w, shots,
-                spread + f"Face to path median {f2p['median']:+.1f}°, spread ±{f2p['sd'] or 0:.1f}° "
-                f"(window {f2p_w[0]:+.0f}° to {f2p_w[1]:+.0f}°). "
-                + _path_words(path["median"] if path else None, f2p["median"]))))
-    if face:
-        face_bad = not in_window(face["median"], face_w) or (face["sd"] or 0) > (face_w[1] - face_w[0]) / 2
-        if face_bad:
-            spread = (f"Start line explains more of the side miss than curve (start ±{sides['start_sd']:.1f} yds, "
-                      f"curve ±{sides['curve_sd']:.1f} yds). " if sides and sides["dominant"] == "start" else "")
-            checks.append(("start", _focus(
-                club, "face_angle", face_w, shots,
-                spread + f"Face angle median {face['median']:+.1f}°, spread ±{face['sd'] or 0:.1f}° "
-                f"(window {face_w[0]:+.0f}° to {face_w[1]:+.0f}°). The ball starts close to where the face points.")))
+    if curve and _outside(curve, f2p_w):
+        spread = (f"Curve explains more of the side miss than start line (curve ±{sides['curve_sd']:.1f} yds, "
+                  f"start ±{sides['start_sd']:.1f} yds). " if sides and sides["dominant"] == "curve" else "")
+        detail = (f"Face to path median {curve['median']:+.1f}°, spread ±{curve['sd'] or 0:.1f}° "
+                  f"({_window_text(f2p_w, 'deg')}). "
+                  + _path_words(path["median"] if path else None, curve["median"]))
+        checks.append(("curve", _focus(club, "face_to_path", f2p_w, shots, spread + detail)))
+    if _enough(start, cfg) and _outside(start, face_w):
+        spread = (f"Start line explains more of the side miss than curve (start ±{sides['start_sd']:.1f} yds, "
+                  f"curve ±{sides['curve_sd']:.1f} yds). " if sides and sides["dominant"] == "start" else "")
+        if start_metric == "face_angle":
+            detail = (f"Face angle median {start['median']:+.1f}°, spread ±{start['sd'] or 0:.1f}° "
+                      f"({_window_text(face_w, 'deg')}). The ball starts close to where the face points.")
+        else:
+            detail = (_club_data_note(m, "face_angle", n)
+                      + f"launch direction, which TrackMan measures on every shot and which mostly follows "
+                      f"the face. Median {start['median']:+.1f}°, spread ±{start['sd'] or 0:.1f}° "
+                      f"({_window_text(face_w, 'deg')}). Curve is not checked: without club data TrackMan "
+                      "has no spin axis and draws every flight straight.")
+        checks.append(("start", _focus(club, start_metric, face_w, shots, spread + detail)))
     if checks:
         dominant = sides["dominant"] if sides else "curve"
         checks.sort(key=lambda c: c[0] != dominant)
         return checks[0][1]
 
-    if not f2p:
+    hold = ("face_to_path", f2p_w) if curve else (start_metric, face_w) if _enough(start, cfg) else None
+    if hold is None:
         return None
-    return _focus(club, "face_to_path", f2p_w, shots,
+    return _focus(club, hold[0], hold[1], shots,
                   "Every median and spread is inside its window. Keep the same target and get more "
                   "single shots inside it.")
 

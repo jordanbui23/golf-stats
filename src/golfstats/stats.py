@@ -13,7 +13,7 @@ TABLE_METRICS = (
     "attack_angle", "club_path", "face_angle", "face_to_path", "dynamic_loft", "spin_loft",
     "launch_angle", "launch_direction", "spin_rate", "spin_axis", "max_height", "land_angle",
     "low_point", "impact_offset", "impact_height", "swing_direction", "swing_plane", "dynamic_lie",
-    "last_data_length",
+    "last_data_length", "curve",
 )
 
 START_TOLERANCE_DEG = 2.0

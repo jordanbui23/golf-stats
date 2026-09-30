@@ -44,9 +44,8 @@ class Config:
     def plans(self) -> Path:
         return self.data_dir / "plans"
 
-    @property
-    def dashboard(self) -> Path:
-        return self.data_dir / "dashboard.html"
+    def dashboard_path(self, slug: str) -> Path:
+        return self.data_dir / f"dashboard-{slug}.html"
 
     @property
     def face_to_path_window(self) -> tuple[float, float]:
