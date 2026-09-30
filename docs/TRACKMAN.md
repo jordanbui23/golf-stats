@@ -3,9 +3,9 @@
 Spec of record for what the parser and the analysis assume about TrackMan data. Every
 load-bearing claim carries a label. `confirmed` means TrackMan's own documentation says it.
 `supported` means one good source. `unverified` means no source yet. Update this file whenever
-an export from the apartment unit contradicts it or TPS changes.
+an export from my unit contradicts it or TPS changes.
 
-Checked 2026-09-30, after the first export from the apartment unit (TPS version unknown, two
+Checked 2026-09-30, after the first export from my unit (TPS version unknown, two
 players, 90 shots, 8 and 9 irons). The figures below from that export come from loading it
 with `store.load_shots` and counting per shot.
 
@@ -27,9 +27,9 @@ TPS version unknown). A second repo's parser (`craigjhudson-source/Trackman-Shaf
 `core/trackman.py`) handles the same shape.
 
 - UTF-8 with a BOM, then a `sep=,` line, then the header row, then a units row such as
-  `[mph]`, `[deg]`, `[yds]`, `[ft]`, `[mm]`, `[]`, then one row per shot. The apartment unit's
+  `[mph]`, `[deg]`, `[yds]`, `[ft]`, `[mm]`, `[]`, then one row per shot. My unit's
   export starts with two BOMs (`EF BB BF EF BB BF`). The parser strips every leading BOM.
-- The apartment unit's header and units rows match the sample and `synth.py` exactly, all 61
+- My unit's header and units rows match the sample and `synth.py` exactly, all 61
   columns. `supported`: two independent exports agree.
 - Dates look like `5/6/2026 6:58:02 PM`.
 - 61 columns. The header names the parser maps are in `src/golfstats/fields.py`, and the
@@ -38,8 +38,8 @@ TPS version unknown). A second repo's parser (`craigjhudson-source/Trackman-Shaf
 - `Condition` holds text such as "Data are normalized to no wind conditions ..." when
   Normalize is on. Its content with Normalize off is `unverified`.
 - The `(Sim)` columns were empty in both exports. `Email`, `TMD No` and `TMD Filename` were
-  empty in the apartment export, and `Ball` was `Medium` on every shot.
-- Units follow the TPS display settings. In that export, curve was in feet while side was in
+  empty in my unit's export, and `Ball` was `Medium` on every shot.
+- Units follow the TPS display settings. In both exports, curve was in feet while side was in
   yards. `supported`. The parser converts every column by its units row, so this matters only
   if a units row is missing, and then it refuses the file.
 - Non-US locales may use `;` and decimal commas. `unverified`: a Danish screenshot shows
@@ -66,7 +66,7 @@ TPS version unknown). A second repo's parser (`craigjhudson-source/Trackman-Shaf
 
 ## Trackman 4 indoors
 
-- Club data can be missing on most shots. In the apartment export, face angle, club path, face
+- Club data can be missing on most shots. In my unit's export, face angle, club path, face
   to path, attack angle, low point, dynamic loft, smash index and spin axis were present on only
   12 of 90 shots, and always together. Impact offset was missing on all 90. `supported`, one
   export. The cause is `unverified`.

@@ -4,12 +4,16 @@ Turns TrackMan 4 session exports into one practice focus per session, a graded p
 next session, and a local dashboard. Everything runs on your own files. There is no server
 and no account.
 
+![Dashboard built from synthetic demo sessions](docs/dashboard.png)
+
+The screenshot comes from `bin/golf demo`, which builds sessions from synthetic shots.
+
 ## After each session
 
 1. In TPS: Practice, Shot Analysis, Library, pick the session, switch to Table View, select
    all shots, click the export icon, choose **TrackMan CSV File**, leave **Normalize data**
    unchecked, Export All. Save it to a USB stick.
-2. Copy the file into `data/inbox/`, for example `scp session.csv cloud:~/projects/golf-stats/data/inbox/`.
+2. Copy the file into `data/inbox/`.
 3. Run `bin/golf ingest`.
 4. Open `data/dashboard-<player>.html`, one per player in the export, for example
    `data/dashboard-jordan.html`. Each file holds only that player's sessions, so it can be sent
@@ -97,11 +101,11 @@ read those sessions.
 
 ## Setup
 
-Python 3.12, standard library only at runtime. Pandas is not used because numpy does not
-build on this box's compiler.
+Python 3.12, standard library only at runtime, so running it needs no install. The tests need
+pytest.
 
 ```
-/home/jbui/.local/bin/python3.12 -m venv .venv
+python3.12 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 ```
