@@ -3,8 +3,9 @@
 Personal project under `~/projects`. Read `README.md` for the architecture and
 `docs/TRACKMAN.md` for what the TrackMan export looks like.
 
-- **Auto-commit scoped changes without asking, then stop.** Inspect `git status`/`diff`/history
-  first and stage only the change's files. Do not push. Never force-push.
+- **Auto-commit and auto-push scoped changes without asking.** Inspect `git status`/`diff`/history
+  first and stage only the change's files. Push after each commit, following the pre-push file
+  check in `~/projects/AGENTS.md`: this remote is PUBLIC. Never force-push.
 - **Adversarial review before calling a code change done.** Run `/xreview` on the diff of the
   unit of work. A high or critical finding is a hard gate.
 - **Never commit shot data.** `data/` is gitignored: exports, the database, reports and plans.
