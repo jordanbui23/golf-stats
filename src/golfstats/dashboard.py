@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import re
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
@@ -77,6 +82,26 @@ def player_slug(player: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", player.lower()).strip("-") or "player"
 
 
+@contextmanager
+def dashboard_lock(cfg: Config) -> Iterator[None]:
+    cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    with open(cfg.data_dir / ".dashboards.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        yield
+
+
+def write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def dashboard_slugs(players: list[str], cfg: Config) -> dict[str, str]:
     path = cfg.dashboard_index
     slugs: dict[str, str] = json.loads(path.read_text()) if path.exists() else {}
@@ -88,8 +113,7 @@ def dashboard_slugs(players: list[str], cfg: Config) -> dict[str, str]:
             slug, suffix = f"{base}-{suffix}", suffix + 1
         slugs[player] = slug
         used.add(slug)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(slugs, indent=2, sort_keys=True) + "\n")
+    write_atomic(path, json.dumps(slugs, indent=2, sort_keys=True) + "\n")
     return slugs
 
 
@@ -97,11 +121,11 @@ def write_dashboards(sessions: list[Session], cfg: Config) -> list[tuple[str, Pa
     by_player: dict[str, list[Session]] = {}
     for sess in sessions:
         by_player.setdefault(sess.player, []).append(sess)
-    slugs = dashboard_slugs(list(by_player), cfg)
     written = []
-    for player in sorted(by_player, key=lambda p: (p.lower(), p)):
-        path = cfg.dashboard_path(slugs[player])
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render_dashboard(by_player[player], cfg, player))
-        written.append((player, path))
+    with dashboard_lock(cfg):
+        slugs = dashboard_slugs(list(by_player), cfg)
+        for player in sorted(by_player, key=lambda p: (p.lower(), p)):
+            path = cfg.dashboard_path(slugs[player])
+            write_atomic(path, render_dashboard(by_player[player], cfg, player))
+            written.append((player, path))
     return written

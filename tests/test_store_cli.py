@@ -1,5 +1,10 @@
 import csv
+import fcntl
 import io
+import os
+import subprocess
+import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -231,3 +236,37 @@ def test_a_dashboard_file_keeps_its_player_when_a_similar_name_arrives_later(cfg
     first, second = cfg.dashboard_path("jo-bui").read_text(), cfg.dashboard_path("jo-bui-2").read_text()
     assert '"player":"jo-bui"' in first and '"player":"Jo Bui"' not in first
     assert '"player":"Jo Bui"' in second and '"player":"jo-bui"' not in second
+
+
+def test_dashboard_writes_wait_for_another_run_to_finish(cfg_file):
+    cfg = load_config(cfg_file)
+    write_export(cfg.inbox, "a.csv", player="Jordan")
+    main(["--config", str(cfg_file), "ingest"])
+    src = Path(__file__).resolve().parents[1] / "src"
+    with open(cfg.data_dir / ".dashboards.lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        before = cfg.dashboard_path("jordan").stat().st_mtime_ns
+        proc = subprocess.Popen([sys.executable, "-m", "golfstats", "--config", str(cfg_file), "dashboard"],
+                                env={**os.environ, "PYTHONPATH": str(src)}, stdout=subprocess.PIPE)
+        time.sleep(1.5)
+        assert proc.poll() is None
+        assert cfg.dashboard_path("jordan").stat().st_mtime_ns == before
+    assert proc.wait(timeout=30) == 0
+    assert cfg.dashboard_path("jordan").stat().st_mtime_ns > before
+
+
+def test_a_failed_index_write_leaves_the_old_index_intact(cfg_file, monkeypatch):
+    from golfstats import dashboard
+    cfg = load_config(cfg_file)
+    write_export(cfg.inbox, "a.csv", player="Jordan")
+    main(["--config", str(cfg_file), "ingest"])
+    before = cfg.dashboard_index.read_text()
+    write_export(cfg.inbox, "b.csv", player="Christian", seed=2)
+
+    def fail(*_a, **_k):
+        raise OSError("disk full")
+    monkeypatch.setattr(dashboard.os, "replace", fail)
+    with pytest.raises(OSError):
+        main(["--config", str(cfg_file), "ingest"])
+    assert cfg.dashboard_index.read_text() == before
+    assert not [p for p in cfg.data_dir.iterdir() if p.name.startswith(".dashboards.json.")]
