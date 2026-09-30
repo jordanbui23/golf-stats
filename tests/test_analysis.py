@@ -204,3 +204,9 @@ def test_sparse_club_data_holds_on_launch_direction_when_it_is_in_window():
         s["launch_direction"] = (s["ts"].minute % 3 - 1) * 0.3
     f = pick_focus(session(shots), cfg())
     assert f["metric"] == "launch_direction" and "inside its window" in f["reason"]
+
+
+def test_spreads_and_the_side_miss_split_need_five_shots():
+    assert robust_sd([1.0, 2.0, 3.0, 4.0]) is None and robust_sd([1.0, 2.0, 3.0, 4.0, 5.0]) is not None
+    few = iron_shots(4, carry_side=lambda i: i * 2.0, curve=lambda i: i * 1.5)
+    assert side_decomposition(few) is None and side_decomposition(iron_shots(5)) is not None

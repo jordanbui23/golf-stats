@@ -16,6 +16,7 @@ TABLE_METRICS = (
     "last_data_length", "curve",
 )
 
+MIN_SPREAD_N = 5
 START_TOLERANCE_DEG = 2.0
 STRAIGHT_AXIS_DEG = 2.0
 HARD_CURVE_AXIS_DEG = 10.0
@@ -43,7 +44,7 @@ def values(shots: list[dict], key: str) -> list[float]:
 
 
 def robust_sd(xs: list[float]) -> float | None:
-    if len(xs) < 3:
+    if len(xs) < MIN_SPREAD_N:
         return None
     med = statistics.median(xs)
     return 1.4826 * statistics.median(abs(x - med) for x in xs)
@@ -112,7 +113,7 @@ def shape_label(shot: dict) -> str | None:
 
 def side_decomposition(shots: list[dict]) -> dict | None:
     pairs = [(s["carry_side"], s["curve"]) for s in shots if s.get("carry_side") is not None and s.get("curve") is not None]
-    if len(pairs) < 3:
+    if len(pairs) < MIN_SPREAD_N:
         return None
     side = [p[0] for p in pairs]
     curve = [p[1] for p in pairs]

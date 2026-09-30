@@ -9,7 +9,7 @@ from pathlib import Path
 from .config import Config
 from .fields import FIELDS_BY_KEY
 from .focus import grade_plan, pick_focus, plan_for
-from .stats import Session, by_club, club_summary, shape_label
+from .stats import MIN_SPREAD_N, Session, by_club, club_summary, shape_label
 
 SHOT_COLUMNS = (
     "carry", "carry_side", "curve", "face_angle", "club_path", "face_to_path", "launch_direction",
@@ -55,6 +55,7 @@ def build_data(sessions: list[Session], cfg: Config, player: str = "") -> dict:
         "generated": datetime.now().isoformat(timespec="seconds"),
         "player": player,
         "min_shots": cfg.min_shots,
+        "min_spread_n": MIN_SPREAD_N,
         "shot_columns": ["session", "club", "use", "shape", "time", *SHOT_COLUMNS],
         "labels": {k: {"label": f.label, "unit": f.unit} for k, f in FIELDS_BY_KEY.items()},
         "trend_metrics": [list(t) for t in TREND_METRICS],
@@ -76,18 +77,30 @@ def player_slug(player: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", player.lower()).strip("-") or "player"
 
 
-def write_dashboards(sessions: list[Session], cfg: Config) -> list[tuple[str, Path]]:
-    by_player: dict[str, list[Session]] = {}
-    for sess in sessions:
-        by_player.setdefault(sess.player, []).append(sess)
-    written, used = [], set()
-    for player in sorted(by_player, key=lambda p: (p.lower(), p)):
+def dashboard_slugs(players: list[str], cfg: Config) -> dict[str, str]:
+    path = cfg.dashboard_index
+    slugs: dict[str, str] = json.loads(path.read_text()) if path.exists() else {}
+    used = set(slugs.values())
+    for player in sorted(set(players) - set(slugs), key=lambda p: (p.lower(), p)):
         slug = base = player_slug(player)
         suffix = 2
         while slug in used:
             slug, suffix = f"{base}-{suffix}", suffix + 1
+        slugs[player] = slug
         used.add(slug)
-        path = cfg.dashboard_path(slug)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(slugs, indent=2, sort_keys=True) + "\n")
+    return slugs
+
+
+def write_dashboards(sessions: list[Session], cfg: Config) -> list[tuple[str, Path]]:
+    by_player: dict[str, list[Session]] = {}
+    for sess in sessions:
+        by_player.setdefault(sess.player, []).append(sess)
+    slugs = dashboard_slugs(list(by_player), cfg)
+    written = []
+    for player in sorted(by_player, key=lambda p: (p.lower(), p)):
+        path = cfg.dashboard_path(slugs[player])
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(render_dashboard(by_player[player], cfg, player))
         written.append((player, path))

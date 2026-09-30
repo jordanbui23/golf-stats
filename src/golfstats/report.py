@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import statistics
 
-from .stats import Session, fmt, is_normalized, session_summary, values
+from .stats import MIN_SPREAD_N, Session, fmt, is_normalized, session_summary, values
 
 _TABLE = (
     ("Carry", "carry", 0, False, True),
@@ -31,9 +31,6 @@ _TREND = (
 )
 
 
-SPREAD_MIN_N = 5
-
-
 def unit_suffix(unit: str) -> str:
     return "°" if unit == "deg" else unit if unit == "%" else f" {unit}" if unit else ""
 
@@ -42,7 +39,7 @@ def _cell(summary: dict | None, digits: int, signed: bool, with_sd: bool, club_n
     if not summary:
         return "–"
     text = fmt(summary["median"], digits, signed)
-    if with_sd and summary["sd"] is not None and summary["n"] >= SPREAD_MIN_N:
+    if with_sd and summary["sd"] is not None:
         text += f" ±{summary['sd']:.{digits}f}"
     if summary["n"] < club_n:
         text += f" ({summary['n']})"
@@ -127,7 +124,7 @@ def render_report(session: Session, history: list[Session], focus: dict | None, 
     lines += ["## By club", "", "Medians, with ± a robust spread (1.4826 × MAD). Distances in yds, angles in °, "
               "speeds in mph, spin in rpm, low point in inches (+ is ahead of the ball). Start is launch "
               "direction. A number in brackets is how many shots had that value, when fewer than all. "
-              f"The spread needs at least {SPREAD_MIN_N}.", ""]
+              f"A spread needs at least {MIN_SPREAD_N} shots.", ""]
     lines.append("| Club | Shots | " + " | ".join(h for h, *_ in _TABLE) + " |")
     lines.append("|---|---|" + "---|" * len(_TABLE))
     for code, c in summ.items():

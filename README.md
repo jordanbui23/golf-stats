@@ -13,7 +13,9 @@ and no account.
 3. Run `bin/golf ingest`.
 4. Open `data/dashboard-<player>.html`, one per player in the export, for example
    `data/dashboard-jordan.html`. Each file holds only that player's sessions, so it can be sent
-   to them on its own. The report for each session is in `data/reports/`.
+   to them on its own. `data/dashboards.json` records which file belongs to which player, so a
+   file never changes owner when a player with a similar name shows up later. The report for
+   each session is in `data/reports/`.
 
 Ingest archives each export byte for byte in `data/raw/`, removes it from the inbox, skips a
 file it has seen, and skips shots already stored, so exporting the whole library again is safe.

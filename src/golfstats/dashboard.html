@@ -142,7 +142,6 @@
   };
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
   const unitText = (u) => u === "deg" ? "°" : u === "%" ? "%" : u ? " " + u : "";
-  const SPREAD_MIN_N = 5;
   const el = (tag, attrs = {}, parent) => {
     const n = document.createElementNS(NS, tag);
     for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
@@ -269,8 +268,8 @@
     $("kpis").innerHTML = tiles.map(([name, key, stat, d, signed, u]) => {
       const m = c.metrics[key];
       if (!m) return "";
-      if (stat === "sd" && m.n < SPREAD_MIN_N) return "";
-      const v = m[stat], spread = stat === "median" && m.sd != null && m.n >= SPREAD_MIN_N ? `<small>±${fmt(m.sd, d)}</small>` : "";
+      if (m[stat] == null) return "";
+      const v = m[stat], spread = stat === "median" && m.sd != null ? `<small>±${fmt(m.sd, d)}</small>` : "";
       const pv = prev && prev.metrics[key] ? prev.metrics[key][stat] : null;
       const few = m.n < c.n ? `${m.n} of ${c.n} shots` : "";
       const delta = [v != null && pv != null ? `${fmt(v - pv, d, true)} vs last` : "", few].filter(Boolean).join(" · ") || "&nbsp;";
@@ -336,7 +335,7 @@
 
   function renderMiss(sess) {
     const entries = Object.entries(sess.clubs).filter(([, c]) => c.sides);
-    if (!entries.length) { $("miss").innerHTML = `<div class="empty">Needs carry side and curve on at least 3 shots.</div>`; return; }
+    if (!entries.length) { $("miss").innerHTML = `<div class="empty">Needs carry side and curve on at least ${DATA.min_spread_n} shots of one club.</div>`; return; }
     const max = Math.max(...entries.flatMap(([, c]) => [c.sides.start_sd, c.sides.curve_sd]), 1);
     const shapes = Object.entries(sess.clubs[state.club].shapes || {});
     $("miss").innerHTML = entries.map(([code, c]) => {

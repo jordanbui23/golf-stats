@@ -222,9 +222,12 @@ def test_each_player_gets_a_dashboard_with_only_their_sessions(cfg_file, capsys)
     assert '"player":"Christian"' in his and '"player":"Jordan"' not in his
 
 
-def test_player_names_that_share_a_file_name_get_separate_dashboards(cfg_file):
+def test_a_dashboard_file_keeps_its_player_when_a_similar_name_arrives_later(cfg_file):
     cfg = load_config(cfg_file)
-    write_export(cfg.inbox, "a.csv", player="Jo Bui")
-    write_export(cfg.inbox, "b.csv", player="jo-bui", seed=2)
+    write_export(cfg.inbox, "a.csv", player="jo-bui")
     main(["--config", str(cfg_file), "ingest"])
-    assert cfg.dashboard_path("jo-bui").exists() and cfg.dashboard_path("jo-bui-2").exists()
+    write_export(cfg.inbox, "b.csv", player="Jo Bui", seed=2, start=START + timedelta(days=1))
+    main(["--config", str(cfg_file), "ingest"])
+    first, second = cfg.dashboard_path("jo-bui").read_text(), cfg.dashboard_path("jo-bui-2").read_text()
+    assert '"player":"jo-bui"' in first and '"player":"Jo Bui"' not in first
+    assert '"player":"Jo Bui"' in second and '"player":"jo-bui"' not in second
