@@ -59,7 +59,7 @@
   table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 12.5px; }
   th, td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
   th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--card); }
-  th:nth-child(-n+3), td:nth-child(-n+3) { text-align: left; }
+  #shots th:nth-child(-n+4), #shots td:nth-child(-n+4), #bag th:first-child, #bag td:first-child { text-align: left; }
   tr.out td { color: #5b6f67; text-decoration: line-through; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
   .trendbar { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
@@ -79,7 +79,7 @@
   <div class="grid">
     <section class="card">
       <h2>Dispersion</h2>
-      <p class="sub">Where the ball landed. Carry and side in yds, target line at 0. Box is median ± spread.</p>
+      <p class="sub">Where the ball landed. Carry and side in yds, target line at 0. Box is median ± spread. Rings are mishits.</p>
       <svg id="dispersion"></svg>
     </section>
     <section class="card">
@@ -94,6 +94,16 @@
       <p class="sub">Impact location on the face (mm) and low point (in, + is ahead of the ball).</p>
       <svg id="impact"></svg>
       <svg id="lowpoint"></svg>
+    </section>
+    <section class="card">
+      <h2>Strike</h2>
+      <p class="sub" id="strikeNote"></p>
+      <div id="strike"></div>
+    </section>
+    <section class="card">
+      <h2>Bag</h2>
+      <p class="sub">Median carry per club over every session so far, solid strikes only where strike is rated. Gap is to the next shorter club.</p>
+      <div class="tablewrap"><table id="bag"></table></div>
     </section>
     <section class="card">
       <h2>Why the ball missed sideways</h2>
@@ -226,7 +236,7 @@
 
   function windowText(f) {
     const [lo, hi] = f.window, u = unitText(f.unit);
-    return hi >= 200 ? `at least ${lo}${u}` : `between ${fmt(lo, 0, true)}${u} and ${fmt(hi, 0, true)}${u}`;
+    return hi >= 200 ? `at least ${fmt(lo, Math.abs(lo) < 10 ? 3 : 0)}${u}` : `between ${fmt(lo, 0, true)}${u} and ${fmt(hi, 0, true)}${u}`;
   }
 
   function renderFocus(sess) {
@@ -242,9 +252,11 @@
     }
     if (sess.grades && sess.grades.length) {
       html += `<div class="grade" style="grid-column:1/-1">` + sess.grades.map((g) => {
-        const pct = g.n ? Math.round(100 * g.hits / g.n) : 0;
+        const what = `${esc(g.club)} ${esc(g.label.toLowerCase())}`;
+        if (!g.n) return `<b>Last plan</b>: ${what} · not graded, no ${esc(g.club)} shots with that number this session.`;
+        const pct = Math.round(100 * g.hits / g.n);
         const base = g.baseline.n ? `${g.baseline.hits} of ${g.baseline.n} (${Math.round(100 * g.baseline.hits / g.baseline.n)}%)` : "–";
-        return `<b>Last plan</b>: ${esc(g.club)} ${esc(g.label.toLowerCase())} in [${fmt(g.window[0], 0, true)}, ${fmt(g.window[1], 0, true)}] · <b>${g.hits} of ${g.n} (${pct}%)</b> this session, ${base} when it was set.`;
+        return `<b>Last plan</b>: ${what} ${windowText(g)} · <b>${g.hits} of ${g.n} (${pct}%)</b> this session, ${base} when it was set.`;
       }).join("<br>") + `</div>`;
     }
     box.innerHTML = html;
@@ -295,7 +307,9 @@
     }
     for (const r of mine) {
       if (r[C.carry] == null || r[C.carry_side] == null) continue;
-      dot(f.g, f.sx(r[C.carry_side]), f.sy(r[C.carry]), colorOf(state.club), 4.4, `${r[C.time]} ${r[C.shape] || ""}\ncarry ${fmt(r[C.carry], 0)}, side ${fmt(r[C.carry_side], 1, true)}`);
+      const tip = `${r[C.time]} ${r[C.shape] || ""} ${r[C.strike] || ""}\ncarry ${fmt(r[C.carry], 0)}, side ${fmt(r[C.carry_side], 1, true)}`;
+      const c = dot(f.g, f.sx(r[C.carry_side]), f.sy(r[C.carry]), colorOf(state.club), 4.4, tip);
+      if (r[C.strike] === "mishit") { c.setAttribute("fill-opacity", 0); c.setAttribute("stroke", colorOf(state.club)); c.setAttribute("stroke-width", 1.8); }
     }
   }
 
@@ -347,6 +361,30 @@
       + (shapes.length ? `<div class="shapes"><span class="sub" style="margin:0 4px 0 0">${esc(state.club)} shapes</span>${shapes.map(([k, v]) => `<span class="shape">${esc(k)}<b>${v}</b></span>`).join("")}</div>` : "");
   }
 
+  const dirText = (d) => d == null ? "–" : Math.abs(d) < 0.5 ? "straight" : `${fmt(Math.abs(d), 0)}° ${d > 0 ? "right" : "left"}`;
+
+  function renderStrike(sess) {
+    const rows = Object.entries(sess.clubs).filter(([, c]) => c.strike && c.strike.n);
+    const unrated = Object.entries(sess.clubs).filter(([, c]) => !c.strike).map(([code]) => code);
+    $("strikeNote").textContent = `A mishit has smash factor under ${Math.round(DATA.mishit_ratio * 100)}% of your best with that club. Smash factor needs only club speed and ball speed, so this works on shots without face and path data.`
+      + (unrated.length ? ` Not rated yet: ${unrated.join(", ")}, fewer than ${DATA.min_shots} shots with smash factor so far.` : "");
+    if (!rows.length) { $("strike").innerHTML = `<div class="empty">Needs ${DATA.min_shots} shots with smash factor for a club, across every session so far.</div>`; return; }
+    $("strike").innerHTML = rows.map(([code, c]) => {
+      const s = c.strike, pct = Math.round(100 * s.share), on = code === state.club;
+      const detail = s.mishits && s.solid
+        ? `Mishits started ${dirText(s.start_mishit)}${s.carry_lost == null ? "" : `, carried ${fmt(s.carry_lost, 0)} yds less`}. Solid strikes started ${dirText(s.start_solid)}${s.carry_solid == null ? "" : `, carried ${fmt(s.carry_solid, 0)} yds`}.`
+        : s.mishits ? "" : "No mishits.";
+      return `<div class="miss-row" style="opacity:${on ? 1 : .55}"><b style="color:${colorOf(code)}">${esc(code)}</b><div><div class="bar-line"><div class="bar" style="width:${pct ? Math.max(2, 0.7 * pct) : 0}%;background:#f87171"></div>${s.mishits} of ${s.n} (${pct}%) under ${fmt(s.threshold, 3)}</div><div class="bar-line" style="white-space:normal">${esc(detail)}</div></div></div>`;
+    }).join("");
+  }
+
+  function renderBag(sess) {
+    const rows = sess.bag || [];
+    if (!rows.length) { $("bag").innerHTML = `<tr><td class="empty">No carry data yet.</td></tr>`; return; }
+    $("bag").innerHTML = `<tr><th>Club</th><th>Carry</th><th>Spread</th><th>Gap</th><th>Shots</th></tr>` + rows.map((r) =>
+      `<tr><td><b style="color:${colorOf(r.club)}">${esc(r.club)}</b></td><td>${fmt(r.carry, 0)}</td><td>${r.sd == null ? "–" : "±" + fmt(r.sd, 0)}</td><td>${r.gap == null ? "–" : fmt(r.gap, 0)}</td><td>${r.n}${r.solid_only ? "" : " (all)"}</td></tr>`).join("");
+  }
+
   function renderTrend() {
     const sel = $("trendMetric");
     if (!sel.options.length) {
@@ -382,7 +420,7 @@
 
   function renderTable() {
     const rows = shots(state.session, state.club, true);
-    const cols = [["Time", "time"], ["Club", "club"], ["Shape", "shape"], ["Carry", "carry", 0], ["Side", "carry_side", 1, true],
+    const cols = [["Time", "time"], ["Club", "club"], ["Shape", "shape"], ["Strike", "strike"], ["Carry", "carry", 0], ["Side", "carry_side", 1, true],
       ["Club spd", "club_speed", 1], ["Smash", "smash_factor", 2], ["Face", "face_angle", 1, true], ["Path", "club_path", 1, true],
       ["F2P", "face_to_path", 1, true], ["Start", "launch_direction", 1, true], ["Curve", "curve", 1, true],
       ["Launch", "launch_angle", 1], ["Spin", "spin_rate", 0], ["Axis", "spin_axis", 1, true],
@@ -401,6 +439,8 @@
     renderDispersion(sess);
     renderDplane();
     renderImpact();
+    renderStrike(sess);
+    renderBag(sess);
     renderMiss(sess);
     renderTrend();
     renderTable();

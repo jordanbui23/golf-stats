@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import statistics
+from pathlib import Path
 
-from .stats import MIN_SPREAD_N, Session, fmt, is_normalized, session_summary, values
+from .config import Config
+from .stats import MIN_SPREAD_N, Session, by_club, fmt, is_normalized, session_summary, values
+from .strike import bag, direction_words, strike_references, strike_summary
 
 _TABLE = (
     ("Carry", "carry", 0, False, True),
@@ -70,14 +73,72 @@ def _warnings(session: Session, summ: dict) -> list[str]:
     no_impact = [s for s in counted if s.get("impact_offset") is None]
     if no_impact and len(no_impact) == len(counted):
         out.append("No impact location on any shot. Check that OERT is on and the hitting area is lit.")
-    excluded = len(session.shots) - len(counted)
+    excluded = sum(1 for s in session.shots if not s["use_in_stat"])
     if excluded:
         out.append(f"{excluded} shot(s) marked \"Use In Stat = FALSE\" in TPS are left out of every number.")
+    if session.no_reads:
+        out.append(f"{len(session.no_reads)} shot(s) have no ball data (a misread, TPS shows zeros) and are left "
+                   "out of every number.")
     return out
 
 
+def bound_text(x: float) -> str:
+    return f"{x:.3f}" if abs(x) < 10 else f"{x:g}"
+
+
+def _strike_lines(session: Session, refs: dict[str, dict], cfg: Config) -> list[str]:
+    rows, mishits, solid = [], 0, 0
+    data_mishit = data_solid = 0
+    for code, group in by_club(session.counted).items():
+        st = strike_summary(group, refs.get(code))
+        if not st or not st["n"]:
+            continue
+        mishits, solid = mishits + st["mishits"], solid + st["solid"]
+        data_mishit, data_solid = data_mishit + st["club_data_mishit"], data_solid + st["club_data_solid"]
+        text = f"- **{code}**: {st['mishits']} of {st['n']} mishits (smash factor under {st['threshold']:.3f})."
+        if st["mishits"] and st["solid"]:
+            lost = f" and carried {st['carry_lost']:.0f} yds less" if st["carry_lost"] is not None else ""
+            carried = f" and carried {st['carry_solid']:.0f} yds" if st["carry_solid"] is not None else ""
+            text += (f" Mishits started {direction_words(st['start_mishit'])}{lost}. "
+                     f"Solid strikes started {direction_words(st['start_solid'])}{carried}.")
+        if st["unrated"]:
+            text += f" {st['unrated']} shot(s) had no club speed, so they are not rated."
+        rows.append(text)
+    if not rows:
+        return []
+    lines = ["## Strike", "",
+             f"A mishit is a shot with smash factor under {cfg.mishit_smash_ratio:.0%} of your best with that club "
+             f"(the 90th percentile of every session so far, at least {cfg.min_shots} shots). Smash factor needs "
+             "only club speed and ball speed, so this works on shots without face and path data.", "", *rows]
+    unrated = [code for code in by_club(session.counted) if code not in refs]
+    if unrated:
+        lines += ["", f"Not rated yet: {', '.join(unrated)}, fewer than {cfg.min_shots} shots with smash factor "
+                      "so far."]
+    if mishits:
+        lines += ["", f"TrackMan recorded club data on {data_mishit} of {mishits} mishits and {data_solid} of {solid} "
+                      "solid strikes. Poor contact is one reason club data goes missing."]
+    return lines + [""]
+
+
+def _bag_lines(rows: list[dict]) -> list[str]:
+    if not rows:
+        return []
+    lines = ["## Bag", "",
+             "Median carry per club over every session so far, solid strikes only where strike is rated. Gap is "
+             "the distance to the next shorter club. Indoors, carry is predicted from launch and spin.", "",
+             "| Club | Carry | Spread | Gap | Shots |", "|---|---|---|---|---|"]
+    for r in rows:
+        spread = f"±{r['sd']:.0f}" if r["sd"] is not None else "–"
+        gap = f"{r['gap']:.0f}" if r["gap"] is not None else "–"
+        who = "" if r["solid_only"] else " (all)"
+        lines.append(f"| {r['club']} | {r['carry']:.0f} | {spread} | {gap} | {r['n']}{who} |")
+    return lines + [""]
+
+
 def render_report(session: Session, history: list[Session], focus: dict | None, grades: list[dict] | None,
-                  plan_path: str | None = None) -> str:
+                  plan_path: str | None = None, cfg: Config | None = None) -> str:
+    cfg = cfg or Config(data_dir=Path("."))
+    refs = strike_references(session, history, cfg.mishit_smash_ratio, cfg.min_shots)
     summ = session_summary(session)
     minutes = (session.end - session.start).total_seconds() / 60
     lines = [
@@ -95,7 +156,7 @@ def render_report(session: Session, history: list[Session], focus: dict | None, 
     if focus:
         lo, hi = focus["window"]
         unit = unit_suffix(focus["unit"])
-        window = f"at least {lo:.0f}{unit}" if hi >= 200 else f"between {lo:+g}{unit} and {hi:+g}{unit}"
+        window = f"at least {bound_text(lo)}{unit}" if hi >= 200 else f"between {lo:+g}{unit} and {hi:+g}{unit}"
         t = focus["today"]
         lines += [
             f"**{focus['club']}: {focus['label'].lower()} {window}.**",
@@ -115,11 +176,19 @@ def render_report(session: Session, history: list[Session], focus: dict | None, 
         for g in grades:
             lo, hi = g["window"]
             base = g["baseline"]
-            pct = f"{g['hits'] / g['n']:.0%}" if g["n"] else "–"
+            if not g["n"]:
+                lines.append(f"- {g['club']} {g['label'].lower()}: not graded, no {g['club']} shots with that "
+                             "number this session.")
+                continue
+            pct = f"{g['hits'] / g['n']:.0%}"
             before = f"{base['hits']} of {base['n']}" if base["n"] else "–"
-            lines.append(f"- {g['club']} {g['label'].lower()} in [{lo:+g}, {hi:+g}]: **{g['hits']} of {g['n']}** "
+            window = f"at least {bound_text(lo)}" if hi >= 200 else f"in [{lo:+g}, {hi:+g}]"
+            lines.append(f"- {g['club']} {g['label'].lower()} {window}: **{g['hits']} of {g['n']}** "
                          f"({pct}), planned {g['shots']}. When the plan was set: {before}.")
         lines.append("")
+
+    lines += _strike_lines(session, refs, cfg)
+    lines += _bag_lines(bag(session, history, refs))
 
     lines += ["## By club", "", "Medians, with ± a robust spread (1.4826 × MAD). Distances in yds, angles in °, "
               "speeds in mph, spin in rpm, low point in inches (+ is ahead of the ball). Start is launch "

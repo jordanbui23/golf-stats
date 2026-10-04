@@ -14,7 +14,8 @@ from pathlib import Path
 from .config import Config
 from .fields import FIELDS_BY_KEY
 from .focus import grade_plan, pick_focus, plan_for
-from .stats import MIN_SPREAD_N, Session, by_club, club_summary, shape_label
+from .stats import MIN_SPREAD_N, Session, by_club, club_summary, is_counted, shape_label
+from .strike import bag, strike_class, strike_references, strike_summary
 
 SHOT_COLUMNS = (
     "carry", "carry_side", "curve", "face_angle", "club_path", "face_to_path", "launch_direction",
@@ -26,7 +27,7 @@ TREND_METRICS = (
     ("face_to_path", "sd"), ("face_angle", "median"), ("face_angle", "sd"), ("club_path", "median"),
     ("club_speed", "median"), ("smash_index", "median"), ("attack_angle", "median"), ("low_point", "median"),
     ("impact_offset", "sd"), ("spin_rate", "median"), ("launch_direction", "median"),
-    ("launch_direction", "sd"), ("curve", "median"), ("curve", "sd"),
+    ("launch_direction", "sd"), ("curve", "median"), ("curve", "sd"), ("mishit_pct", "median"),
 )
 
 
@@ -34,35 +35,46 @@ def _round(x: float | None, digits: int = 2) -> float | None:
     return None if x is None else round(x, digits)
 
 
-def _club_block(shots: list[dict]) -> dict:
+def _club_block(shots: list[dict], ref: dict | None) -> dict:
     c = club_summary(shots)
     metrics = {k: {"median": _round(v["median"]), "sd": _round(v["sd"]), "n": v["n"]}
                for k, v in c["metrics"].items() if v}
+    strike = strike_summary([s for s in shots if is_counted(s)], ref)
+    if strike and strike["n"]:
+        metrics["mishit_pct"] = {"median": _round(100 * strike["share"], 1), "sd": None, "n": strike["n"]}
+    strike = {k: _round(v, 3 if k in ("threshold", "best") else 2) if isinstance(v, float) else v
+              for k, v in strike.items()} if strike else None
     sides = {k: (_round(v) if isinstance(v, float) else v) for k, v in c["sides"].items()} if c["sides"] else None
-    return {"n": c["n"], "n_total": c["n_total"], "metrics": metrics, "shapes": c["shapes"], "sides": sides}
+    return {"n": c["n"], "n_total": c["n_total"], "metrics": metrics, "shapes": c["shapes"], "sides": sides,
+            "strike": strike}
 
 
 def build_data(sessions: list[Session], cfg: Config, player: str = "") -> dict:
     out_sessions, shots = [], []
     for idx, sess in enumerate(sessions):
         plan = plan_for(sess, sessions, cfg.plans)
+        refs = strike_references(sess, sessions, cfg.mishit_smash_ratio, cfg.min_shots)
         out_sessions.append({
             "id": sess.id, "label": sess.label, "player": sess.player, "start": sess.start.isoformat(),
-            "shots": len(sess.shots), "counted": len(sess.counted),
-            "clubs": {code: _club_block(group) for code, group in by_club(sess.shots).items()},
-            "focus": pick_focus(sess, cfg),
+            "shots": len(sess.shots), "counted": len(sess.counted), "no_reads": len(sess.no_reads),
+            "clubs": {code: _club_block(group, refs.get(code)) for code, group in by_club(sess.shots).items()},
+            "focus": pick_focus(sess, cfg, sessions),
             "grades": grade_plan(plan, sess) if plan else None,
+            "bag": [{k: _round(v) if isinstance(v, float) else v for k, v in row.items()}
+                    for row in bag(sess, sessions, refs)],
         })
         for s in sess.shots:
-            shots.append([idx, s["club_code"], int(s["use_in_stat"]), shape_label(s),
+            shots.append([idx, s["club_code"], int(is_counted(s)), shape_label(s), strike_class(s, refs),
                           s["ts"].strftime("%H:%M:%S"), *(_round(s.get(k)) for k in SHOT_COLUMNS)])
     return {
         "generated": datetime.now().isoformat(timespec="seconds"),
         "player": player,
         "min_shots": cfg.min_shots,
         "min_spread_n": MIN_SPREAD_N,
-        "shot_columns": ["session", "club", "use", "shape", "time", *SHOT_COLUMNS],
-        "labels": {k: {"label": f.label, "unit": f.unit} for k, f in FIELDS_BY_KEY.items()},
+        "shot_columns": ["session", "club", "use", "shape", "strike", "time", *SHOT_COLUMNS],
+        "labels": {**{k: {"label": f.label, "unit": f.unit} for k, f in FIELDS_BY_KEY.items()},
+                   "mishit_pct": {"label": "Mishit rate", "unit": "%"}},
+        "mishit_ratio": cfg.mishit_smash_ratio,
         "trend_metrics": [list(t) for t in TREND_METRICS],
         "windows": {"face_to_path": list(cfg.face_to_path_window), "face_angle": list(cfg.face_window),
                     "launch_direction": list(cfg.face_window)},

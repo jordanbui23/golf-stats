@@ -270,3 +270,56 @@ def test_a_failed_index_write_leaves_the_old_index_intact(cfg_file, monkeypatch)
         main(["--config", str(cfg_file), "ingest"])
     assert cfg.dashboard_index.read_text() == before
     assert not [p for p in cfg.data_dir.iterdir() if p.name.startswith(".dashboards.json.")]
+
+
+def test_an_alias_merges_the_qr_login_name_into_the_typed_name(cfg_file, capsys):
+    cfg_file.write_text(cfg_file.read_text() + '[player.aliases]\nJordanBui = "Jordan"\n')
+    cfg = load_config(cfg_file)
+    write_export(cfg.inbox, "a.csv", player="Jordan", plan=[("7 Iron", 24)])
+    write_export(cfg.inbox, "b.csv", player="JordanBui", start=START + timedelta(days=1), seed=2,
+                 plan=[("7 Iron", 24)])
+    assert main(["--config", str(cfg_file), "ingest"]) == 0
+    assert "(JordanBui)" not in capsys.readouterr().out
+    assert not cfg.dashboard_path("jordanbui").exists()
+    import json
+    html = cfg.dashboard_path("jordan").read_text()
+    data = json.loads(html.split("const DATA = ", 1)[1].split(";</script>", 1)[0])
+    assert [s["player"] for s in data["sessions"]] == ["Jordan", "Jordan"]
+
+
+def test_the_same_shot_under_both_alias_names_counts_once(cfg_file):
+    from golfstats.__main__ import _sessions
+    cfg_file.write_text(cfg_file.read_text() + '[player.aliases]\nJordanBui = "Jordan"\n')
+    cfg = load_config(cfg_file)
+    write_export(cfg.inbox, "a.csv", player="Jordan")
+    write_export(cfg.inbox, "b.csv", player="JordanBui")
+    assert main(["--config", str(cfg_file), "ingest"]) == 0
+    conn = connect(cfg.db_path)
+    stored = load_shots(conn)
+    conn.close()
+    sessions = _sessions(cfg)
+    assert len(sessions) == 1 and 2 * len(sessions[0].shots) == len(stored)
+    assert {s["import_id"] for s in sessions[0].shots} == {min(s["import_id"] for s in stored)}
+
+
+def _stored(i: int, player: str, **values) -> dict:
+    ts = START + timedelta(minutes=1)
+    return {"id": i, "shot_key": f"{player}|{ts.isoformat()}|7 Iron", "player": player, "ts": ts, "club": "7 Iron",
+            "use_in_stat": True, "ball_speed": 110.0, "carry": 150.0, **values}
+
+
+def test_a_misread_copy_gives_way_to_the_alias_copy_with_ball_data():
+    from golfstats.store import merge_aliases
+    misread = _stored(1, "Jordan", ball_speed=None, carry=0.0)
+    shots, conflicts = merge_aliases([_stored(2, "JordanBui"), misread], {"JordanBui": "Jordan"})
+    assert [s["id"] for s in shots] == [2] and conflicts == []
+    shots, conflicts = merge_aliases([_stored(1, "Jordan"), _stored(2, "JordanBui", ball_speed=None)],
+                                     {"JordanBui": "Jordan"})
+    assert [s["id"] for s in shots] == [1] and conflicts == []
+
+
+def test_alias_copies_with_different_values_are_reported():
+    from golfstats.store import merge_aliases
+    shots, conflicts = merge_aliases([_stored(1, "Jordan"), _stored(2, "JordanBui", carry=151.0)],
+                                     {"JordanBui": "Jordan"})
+    assert [s["id"] for s in shots] == [1] and len(conflicts) == 1 and "JordanBui|" in conflicts[0]

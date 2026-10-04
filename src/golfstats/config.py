@@ -18,8 +18,11 @@ class Config:
     smash_index_min: float = 95.0
     impact_offset_spread_mm: float = 8.0
     low_point_behind_share: float = 0.25
+    mishit_smash_ratio: float = 0.85
+    mishit_share_max: float = 0.2
     curve_bias_pct: float = 4.0
     face_window: tuple[float, float] = (-2.0, 2.0)
+    aliases: dict[str, str] = field(default_factory=dict)
     plan_shots: int = 20
     face_to_path_windows: dict[str, tuple[float, float]] = field(default_factory=lambda: {
         "straight": (-2.0, 2.0), "draw": (-4.0, 0.0), "fade": (0.0, 4.0)})
@@ -66,8 +69,9 @@ def load_config(path: Path | None = None, data_dir: Path | None = None) -> Confi
     cfg.handedness = player.get("handedness", cfg.handedness).upper()
     cfg.preferred_shape = player.get("preferred_shape", cfg.preferred_shape).lower()
     cfg.gap_minutes = sessions.get("gap_minutes", cfg.gap_minutes)
+    cfg.aliases = {str(k): str(v) for k, v in player.get("aliases", {}).items()}
     for key in ("min_shots", "smash_index_min", "impact_offset_spread_mm", "low_point_behind_share",
-                "curve_bias_pct", "plan_shots"):
+                "mishit_smash_ratio", "mishit_share_max", "curve_bias_pct", "plan_shots"):
         setattr(cfg, key, focus.get(key, getattr(cfg, key)))
     cfg.face_window = tuple(focus.get("face_window", cfg.face_window))
     for shape, window in focus.get("face_to_path_window", {}).items():

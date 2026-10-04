@@ -166,6 +166,25 @@ def _insert(conn: sqlite3.Connection, parsed, sha: str, path: Path, archived: Pa
     return import_id, added, conflicts, replaced
 
 
+def merge_aliases(shots: list[dict], aliases: dict[str, str]) -> tuple[list[dict], list[str]]:
+    kept: dict[tuple, dict] = {}
+    conflicts: list[str] = []
+    for s in sorted(shots, key=lambda x: x["id"]):
+        name = s.get("player") or ""
+        s["player"] = aliases.get(name, name)
+        key = (s["player"], s["ts"], s["club"])
+        first = kept.get(key)
+        if first is None:
+            kept[key] = s
+        elif first.get("ball_speed") is None and s.get("ball_speed") is not None:
+            kept[key] = s
+        elif s.get("ball_speed") is None and first.get("ball_speed") is not None:
+            continue
+        elif not all(_same(first.get(c), s.get(c)) for c in _COMPARED):
+            conflicts.append(f"{first['shot_key']} vs {s['shot_key']}")
+    return list(kept.values()), conflicts
+
+
 def load_shots(conn: sqlite3.Connection) -> list[dict]:
     shots = []
     for r in conn.execute("SELECT * FROM shots ORDER BY player, ts"):

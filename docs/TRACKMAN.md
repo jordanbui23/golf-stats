@@ -66,20 +66,35 @@ TPS version unknown). A second repo's parser (`craigjhudson-source/Trackman-Shaf
 
 ## Trackman 4 indoors
 
-- Club data can be missing on most shots. In my unit's export, face angle, club path, face
-  to path, attack angle, low point, dynamic loft, smash index and spin axis were present on only
-  12 of 90 shots, and always together. Impact offset was missing on all 90. `supported`, one
-  export. The cause is `unverified`.
+The counts below come from four exports from my unit, dated 2026-09-29 to 2026-10-02, parsed
+with `tps_csv.parse_tps_csv`. They hold 200 shots, and 199 count once the misread row is left out.
+
+- Club data can be missing on most shots. Face angle, club path, face to path, attack angle,
+  low point, dynamic loft, smash index and spin axis were present or absent together on all 199
+  counted shots. They were present on 59 of them. Impact offset was missing on all 200.
+  `supported`, four exports.
+- Poor contact is one cause. Club data was present on 2 of 28 mishits and on 53 of 114 solid
+  strikes, using the mishit rule in `README.md` over one player's three sessions. `supported`.
+  Half the solid strikes still had no club data, so contact is not the only cause. The rest
+  is `unverified`.
+- Club speed, and so smash factor, can be missing too. It was present on 186 of 199 counted
+  shots, but on only 4 of 16 driver shots. `supported`.
 - A shot without a spin axis is drawn straight: its carry side equals carry × tan(launch
-  direction) within 0.5 yds on 71 of 78 such shots, and within 5.3 yds on all of them.
-  `supported`, same export. So curve is unknown on those shots, and their side miss is start
-  line only. The analysis never derives curve for them.
-- Launch direction follows the face: on the 12 shots with club data it matched
-  0.75 × face angle + 0.25 × club path within 0.14°. `supported`, same export, irons only. The
-  focus picker checks start line with launch direction when a club has fewer than
-  `focus.min_shots` face angles.
-- `Spin Rate Type` was `Measured` on 1 of 90 shots, a 9 iron at 1,676 rpm next to estimated
+  direction) within 0.5 yds on 118 of 140 such shots, and within 5.3 yds on all of them.
+  `supported`. So curve is unknown on those shots, and their side miss is start line only. The
+  analysis never derives curve for them.
+- Launch direction follows the face. On the 59 shots with club data, from driver to 9 iron, it
+  matched 0.75 × face angle + 0.25 × club path within 0.14° on 44 shots and within 0.68° on
+  all. `supported`. The focus picker checks start line with launch direction when a club has
+  fewer than `focus.min_shots` face angles.
+- `Spin Rate Type` was `Measured` on 1 of 200 shots, a 9 iron at 1,676 rpm next to estimated
   values near 6,500 rpm. Treat a lone measured value without RCT balls as suspect. `unverified`.
+- A misread exports as a row with no club or ball data, zeros for carry and total, and
+  `Spin Rate Type` `Undefined`. `supported`, one row. The analysis leaves out every shot with
+  no ball speed.
+- The 2026-09-30 and 2026-10-02 exports name the player by the TrackMan account name. The first
+  export used the name typed at the bay. `supported` for the names. The QR code login as the
+  cause is `unverified`. `[player.aliases]` in `config.toml` merges the two.
 
 - Indoors the radar sees only part of the flight, so carry and total are less accurate.
   `confirmed`, article 36721370071707. The sample's `Last data Point - Length` was about 3 yds.
