@@ -272,7 +272,8 @@ Local store, `src/golfstats/store.py`:
    site's state wins.
 4. Publish a result for every site upload, and one dashboard per site user, built from the
    shots of that user's players with the player renamed to the user's display name, at the
-   `ledger_version` read in step 2.
+   `ledger_version` read in step 2. `[player.aliases]` in `config.toml` merges player names
+   before the user's players are matched, as it does for the local dashboard.
 
 Site settings live in `data/site.json` as `{url, token}` with mode 0600, written by
 `bin/golf site`. The URL must be `https://`, or `http://` to `localhost` or `127.0.0.1`.

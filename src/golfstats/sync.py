@@ -17,8 +17,8 @@ from .config import Config
 from .dashboard import render_dashboard
 from .stats import split_sessions
 from .store import (
-    connect, delete_upload, link_site_id, list_uploads, load_shots, mirror_upload, set_replace, set_reverted,
-    shot_span, upload_raw, upload_result,
+    connect, delete_upload, link_site_id, list_uploads, load_shots, merge_aliases, mirror_upload, set_replace,
+    set_reverted, shot_span, upload_raw, upload_result,
 )
 
 TIMEOUT = 30
@@ -248,7 +248,7 @@ def sync(cfg: Config, client: SiteClient) -> SyncReport:
         for i in range(0, len(results), RESULTS_PER_PUBLISH):
             client.publish({"ledger_version": report.ledger_version,
                             "results": results[i:i + RESULTS_PER_PUBLISH], "dashboards": []})
-        shots = load_shots(conn)
+        shots, _ = merge_aliases(load_shots(conn), cfg.aliases)
         for user in state["users"]:
             board = build_dashboard(shots, user, cfg)
             client.publish({"ledger_version": report.ledger_version, "results": [], "dashboards": [board]})

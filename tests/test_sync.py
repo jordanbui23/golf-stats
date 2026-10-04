@@ -309,6 +309,17 @@ def test_sync_publishes_one_dashboard_per_user_at_the_state_version(tmp_path):
 
 
 
+def test_an_alias_puts_the_qr_login_name_on_the_typed_name_dashboard(tmp_path):
+    cfg = cfg_at(tmp_path)
+    cfg.aliases = {"JordanBui": "Jordan"}
+    site = FakeSite(users=[{"username": "jordan", "display_name": "Jordan", "players": ["Jordan"]}])
+    site.add(write_export(tmp_path / "in", "a.csv", player="Jordan").read_bytes())
+    site.add(write_export(tmp_path / "in", "b.csv", player="JordanBui", seed=2,
+                          start=START + timedelta(days=2)).read_bytes())
+    report = sync(cfg, site)
+    assert report.published == {"jordan": 2}
+
+
 def test_results_are_published_in_batches(tmp_path, monkeypatch):
     monkeypatch.setattr("golfstats.sync.RESULTS_PER_PUBLISH", 2)
     cfg = cfg_at(tmp_path)

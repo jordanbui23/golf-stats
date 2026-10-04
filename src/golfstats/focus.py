@@ -8,7 +8,8 @@ from pathlib import Path
 from .clubs import club_order, is_iron_or_wedge
 from .config import Config
 from .fields import FIELDS_BY_KEY
-from .stats import Session, by_club, club_summary, fmt, robust_sd, values
+from .stats import Session, by_club, club_summary, fmt, is_counted, robust_sd, values
+from .strike import direction_words, strike_references, strike_summary
 
 LOW_POINT_WINDOW = (0.5, 5.0)
 
@@ -26,7 +27,7 @@ def window_hits(shots: list[dict], metric: str, window: tuple[float, float]) -> 
 
 
 def primary_club(session: Session, cfg: Config) -> str | None:
-    counts = {code: sum(1 for s in group if s["use_in_stat"]) for code, group in by_club(session.shots).items()}
+    counts = {code: sum(1 for s in group if is_counted(s)) for code, group in by_club(session.shots).items()}
     eligible = [c for c, n in counts.items() if n >= cfg.min_shots and c != "PT"]
     if not eligible:
         return None
@@ -73,13 +74,23 @@ def _club_data_note(m: dict, key: str, n: int) -> str:
     return f"{FIELDS_BY_KEY[key].label} was measured on only {have} of {n} shots, so this uses "
 
 
-def pick_focus(session: Session, cfg: Config) -> dict | None:
+def pick_focus(session: Session, cfg: Config, history: list[Session] | None = None) -> dict | None:
     club = primary_club(session, cfg)
     if club is None:
         return None
-    shots = [s for s in session.shots if s["club_code"] == club and s["use_in_stat"]]
+    shots = [s for s in session.shots if s["club_code"] == club and is_counted(s)]
     summ = club_summary(shots)
     m, n = summ["metrics"], summ["n"]
+
+    refs = strike_references(session, history or [session], cfg.mishit_smash_ratio, cfg.min_shots)
+    st = strike_summary(shots, refs.get(club))
+    if st and st["n"] >= cfg.min_shots and st["share"] > cfg.mishit_share_max:
+        cost = (f" They started {direction_words(st['start_mishit'])} on median and carried "
+                f"{st['carry_lost']:.0f} yds less than your solid strikes." if st["carry_lost"] is not None else "")
+        return _focus(club, "smash_factor", (st["threshold"], 200.0), shots,
+                      f"{st['mishits']} of {st['n']} shots were mishits: smash factor under {st['threshold']:.3f}, "
+                      f"which is {cfg.mishit_smash_ratio:.0%} of your best with this club ({st['best']:.2f})."
+                      + cost + " Strike comes before direction.")
 
     lp, lp_behind = m["low_point"], summ["low_point_behind_share"]
     if is_iron_or_wedge(club) and _enough(lp, cfg) and lp_behind > cfg.low_point_behind_share:
@@ -172,7 +183,7 @@ def plan_for(session: Session, sessions: list[Session], cfg: Config) -> dict | N
     if not earlier:
         return None
     prev = max(earlier, key=lambda s: s.start)
-    focus = pick_focus(prev, cfg)
+    focus = pick_focus(prev, cfg, sessions)
     return make_plan(prev, focus, cfg) if focus else None
 
 
@@ -180,8 +191,9 @@ def grade_plan(plan: dict, session: Session) -> list[dict]:
     grades = []
     for block in plan["blocks"]:
         window = tuple(block["window"])
-        shots = [s for s in session.shots if s["club_code"] == block["club"] and s["use_in_stat"]]
+        shots = [s for s in session.shots if s["club_code"] == block["club"] and is_counted(s)]
         shots = shots[: block["shots"]]
         hits, n = window_hits(shots, block["metric"], window)
-        grades.append({**block, "hits": hits, "n": n, "label": FIELDS_BY_KEY[block["metric"]].label})
+        field = FIELDS_BY_KEY[block["metric"]]
+        grades.append({**block, "hits": hits, "n": n, "label": field.label, "unit": field.unit})
     return grades

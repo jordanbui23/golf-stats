@@ -8,9 +8,9 @@ from pathlib import Path
 from .config import Config, load_config
 from .dashboard import write_dashboards
 from .focus import grade_plan, make_plan, pick_focus, plan_for, save_plan
-from .report import render_report, unit_suffix
+from .report import bound_text, render_report, unit_suffix
 from .stats import Session, split_sessions
-from .store import connect, ingest_file, list_uploads, load_shots
+from .store import connect, ingest_file, list_uploads, load_shots, merge_aliases
 from .synth import demo_exports
 from .sync import SiteError, key_hash, load_site, login_key, save_site, sync
 
@@ -19,6 +19,10 @@ def _sessions(cfg: Config) -> list[Session]:
     conn = connect(cfg.db_path)
     shots = load_shots(conn)
     conn.close()
+    shots, conflicts = merge_aliases(shots, cfg.aliases)
+    if conflicts:
+        print(f"{len(conflicts)} shot(s) are stored under two names that [player.aliases] merges, with different "
+              f"values. Kept the copy imported first. First: {conflicts[0]}")
     if cfg.player:
         shots = [s for s in shots if (s.get("player") or "").lower() == cfg.player.lower()]
     return split_sessions(shots, cfg.gap_minutes)
@@ -32,11 +36,11 @@ def _rel(path: Path) -> str:
 
 
 def _write_report(session: Session, sessions: list[Session], cfg: Config, save: bool) -> tuple[Path, dict | None]:
-    focus = pick_focus(session, cfg)
+    focus = pick_focus(session, cfg, sessions)
     plan = plan_for(session, sessions, cfg)
     grades = grade_plan(plan, session) if plan else None
     plan_path = save_plan(make_plan(session, focus, cfg), cfg.plans) if (focus and save) else None
-    text = render_report(session, sessions, focus, grades, _rel(plan_path) if plan_path else None)
+    text = render_report(session, sessions, focus, grades, _rel(plan_path) if plan_path else None, cfg)
     cfg.reports.mkdir(parents=True, exist_ok=True)
     path = cfg.reports / f"{session.id}.md"
     path.write_text(text + "\n")
@@ -49,7 +53,7 @@ def _focus_line(focus: dict | None) -> str:
     lo, hi = focus["window"]
     t = focus["today"]
     unit = unit_suffix(focus["unit"])
-    window = f"at least {lo:g}{unit}" if hi >= 200 else f"{lo:+g}{unit} to {hi:+g}{unit}"
+    window = f"at least {bound_text(lo)}{unit}" if hi >= 200 else f"{lo:+g}{unit} to {hi:+g}{unit}"
     return (f"Next focus: {focus['club']} {focus['label'].lower()} {window}"
             f" (today {t['hits']} of {t['n']} in window).")
 

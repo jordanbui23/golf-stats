@@ -32,11 +32,23 @@ class Session:
 
     @property
     def counted(self) -> list[dict]:
-        return [s for s in self.shots if s["use_in_stat"]]
+        return [s for s in self.shots if is_counted(s)]
+
+    @property
+    def no_reads(self) -> list[dict]:
+        return [s for s in self.shots if s["use_in_stat"] and is_no_read(s)]
 
     @property
     def label(self) -> str:
         return f"{self.start:%a %b %-d %Y, %-I:%M %p}"
+
+
+def is_no_read(shot: dict) -> bool:
+    return shot.get("ball_speed") is None
+
+
+def is_counted(shot: dict) -> bool:
+    return bool(shot["use_in_stat"]) and not is_no_read(shot)
 
 
 def values(shots: list[dict], key: str) -> list[float]:
@@ -132,7 +144,7 @@ def side_decomposition(shots: list[dict]) -> dict | None:
 
 
 def club_summary(shots: list[dict]) -> dict:
-    counted = [s for s in shots if s["use_in_stat"]]
+    counted = [s for s in shots if is_counted(s)]
     shapes: dict[str, int] = {}
     for s in counted:
         label = shape_label(s)

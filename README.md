@@ -109,10 +109,16 @@ to its `http://127.0.0.1:<port>` and `GOLF_TEST_SITE_TOKEN` to its `SYNC_TOKEN` 
 The focus picker looks at the club with the most counted shots, once it has at least
 `focus.min_shots`. It checks strike before direction and stops at the first check that fails:
 
-1. Irons and wedges: too many shots bottoming out at or behind the ball.
-2. Median Smash Index below target.
-3. Heel-to-toe impact spread too wide.
-4. Direction. The side miss is split into start line (side minus curve, driven by face angle)
+1. Too many mishits. A mishit is a shot whose smash factor is below
+   `focus.mishit_smash_ratio` of your best with that club, rounded up to 0.001. Your best is the 90th percentile of
+   that club's smash factor over this session and every earlier one, once the club has
+   `focus.min_shots` shots with smash factor. The check fails when the share of mishits is above
+   `focus.mishit_share_max`. Smash factor needs only club speed and ball speed, so this check
+   runs on shots without face and path data.
+2. Irons and wedges: too many shots bottoming out at or behind the ball.
+3. Median Smash Index below target.
+4. Heel-to-toe impact spread too wide.
+5. Direction. The side miss is split into start line (side minus curve, driven by face angle)
    and curve (driven by face to path). Whichever spread is larger is checked first against
    its window.
 
@@ -129,8 +135,23 @@ session grades it: how many of the planned shots landed in the window, against t
 it was set. The grade recomputes the plan from the previous session, so the file is never read. A
 session with no plan of its own breaks the chain, so an older plan is never graded twice.
 
+Every report and dashboard also has two sections that do not depend on the focus:
+
+- **Strike** lists each rated club's mishits, where they started and how much carry they lost
+  against solid strikes. On the dashboard's dispersion plot a mishit is drawn as a ring.
+- **Bag** gives the median carry per club over this session and every earlier one, from
+  solid strikes only when the club is rated, and the gap to the next shorter club.
+
+A shot with no ball speed is a misread. TPS writes zeros for its flight. It is left out of
+every number, and the report counts it.
+
 Every threshold and window is in `config.toml`. They are starting heuristics, not TrackMan
 guidance. `player.preferred_shape` moves the face to path window for a draw or a fade.
+`[player.aliases]` maps one TPS player name to another, so both names share one dashboard.
+Some exports from this unit name the player by the TrackMan account name instead of the name
+typed at the bay. When the same shot is stored under both names, the copy imported first counts
+and the other is ignored. A copy with no ball data gives way to one that has it. Any other
+difference between the copies is reported on every run.
 
 ## Layout
 
@@ -145,6 +166,7 @@ src/golfstats/
   store.py                SQLite upload ledger and ingest (dedupe by file hash and by shot)
   clubs.py                club names -> codes (DR, 7i, PW) and bag order
   stats.py                sessions, robust medians and spreads, shot shape, side-miss split
+  strike.py               mishit rating from smash factor, and the bag table
   focus.py                focus picker, plan writing and grading
   report.py               markdown session report
   dashboard.py            builds the dashboard data
@@ -178,8 +200,9 @@ python3.12 -m venv .venv
 
 - Indoors the radar tracks about 3 yds of flight, so carry, side and curve are TrackMan's
   predictions from launch and spin. The club numbers and launch numbers are measured.
-- The export format matches two real TPS exports: one by another golfer and the first from
-  this unit. See `docs/TRACKMAN.md`.
-- On this unit most shots have no club data, so strike checks and curve checks often have too
-  few values to run.
+- The export format matches one TPS export by another golfer and four from this unit. See
+  `docs/TRACKMAN.md`.
+- On this unit most shots have no club data, so the low point, Smash Index and curve checks
+  often have too few values to run. The mishit check needs only club speed, and TrackMan drops
+  that too on many driver shots.
 - Right-handed only. The heel/toe sign of impact offset is unverified.

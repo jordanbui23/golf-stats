@@ -11,6 +11,11 @@ handedness = "R"
 # Target shot shape: "straight", "draw" or "fade". Sets the face-to-path window.
 preferred_shape = "straight"
 
+# TPS player names that are the same person. Some exports use your TrackMan account name
+# instead of the name typed at the bay.
+[player.aliases]
+JordanBui = "Jordan"
+
 [sessions]
 # A gap longer than this between two shots starts a new session.
 gap_minutes = 90
@@ -22,6 +27,11 @@ min_shots = 8
 smash_index_min = 95.0
 # Robust spread of impact offset (heel to toe) above this counts as a strike problem.
 impact_offset_spread_mm = 8.0
+# A mishit is a shot whose smash factor is below this share of your best with that club
+# (the 90th percentile of every session so far). Needs club speed, not face or path.
+mishit_smash_ratio = 0.85
+# Share of mishits with the focus club above this counts as a strike problem.
+mishit_share_max = 0.2
 # Irons and wedges: share of shots bottoming out at or behind the ball above this is a problem.
 low_point_behind_share = 0.25
 # Median curve beyond this share of carry counts as a shape bias.

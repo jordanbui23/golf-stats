@@ -19,7 +19,7 @@ def cfg(tmp_path=None) -> Config:
 
 def shot(i: int, club: str = "7i", **metrics) -> dict:
     base = {"ts": T0 + timedelta(minutes=i), "player": "J", "club": club, "club_code": club, "use_in_stat": True,
-            "spin_rate_type": "Measured"}
+            "spin_rate_type": "Measured", "ball_speed": 110.0}
     return {**base, **metrics}
 
 
