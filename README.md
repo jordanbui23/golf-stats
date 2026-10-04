@@ -21,8 +21,11 @@ The screenshot comes from `bin/golf demo`, which builds sessions from synthetic 
    file never changes owner when a player with a similar name shows up later. The report for
    each session is in `data/reports/`.
 
-Ingest archives each export byte for byte in `data/raw/`, removes it from the inbox, skips a
-file it has seen, and skips shots already stored, so exporting the whole library again is safe.
+Ingest stores each export byte for byte in `data/golf.db` as an upload with its ingestion
+time, removes it from the inbox, skips a file it has seen, and skips shots already stored, so
+exporting the whole library again is safe. `bin/golf uploads` lists every stored upload.
+A database from before uploads, with files in `data/raw/`, migrates on first open. The
+migration first copies it to `data/golf.db.bak-<time>`.
 A shot is identified by player, timestamp and club. If a new file carries a stored shot with
 different values in any measurement, the spin type, tags, the ball or the condition text (for
 example the same session exported with Normalize on), ingest keeps the stored values, reports
@@ -45,6 +48,7 @@ of a symlink placed in the inbox, is never deleted.
 | `bin/golf sessions` | List sessions |
 | `bin/golf dashboard` | Rebuild `data/dashboard-<player>.html` for every player |
 | `bin/golf demo` | Build a dashboard from four synthetic sessions in `data/demo/` |
+| `bin/golf uploads` | List stored uploads with their state and how many of their shots are used |
 
 ## How the focus is picked
 
@@ -66,8 +70,9 @@ how many shots each number came from when it is fewer than all.
 
 If every check passes, it keeps face to path as the target so the pattern has to repeat, or
 launch direction when club data is too sparse.
-The chosen target becomes a plan in `data/plans/`. The same player's next session grades it:
-how many of the planned shots landed in the window, against the count when it was set. A
+The chosen target becomes a plan, written to `data/plans/` as a record. The same player's next
+session grades it: how many of the planned shots landed in the window, against the count when
+it was set. The grade recomputes the plan from the previous session, so the file is never read. A
 session with no plan of its own breaks the chain, so an older plan is never graded twice.
 
 Every threshold and window is in `config.toml`. They are starting heuristics, not TrackMan
@@ -82,7 +87,7 @@ docs/TRACKMAN.md          what the export and parameters look like, with confide
 src/golfstats/
   fields.py               TPS header names -> canonical keys and units
   tps_csv.py              parser: sep line, header, units row, unit conversion, dates
-  store.py                SQLite store and ingest (dedupe by file hash and by shot)
+  store.py                SQLite upload ledger and ingest (dedupe by file hash and by shot)
   clubs.py                club names -> codes (DR, 7i, PW) and bag order
   stats.py                sessions, robust medians and spreads, shot shape, side-miss split
   focus.py                focus picker, plan writing and grading
@@ -91,13 +96,14 @@ src/golfstats/
   dashboard.html          dashboard template (vanilla JS, inline SVG, works offline)
   synth.py                synthetic TPS exports for tests and the demo
 tests/                    pytest suite, offline
-data/                     gitignored: golf.db, inbox/, raw/, reports/, plans/, dashboard-<player>.html
+data/                     gitignored: golf.db, inbox/, reports/, plans/, dashboard-<player>.html
 ```
 
 Data flow: CSV, then `tps_csv` converts every value to mph, yds, ft, in, mm, deg and rpm by
-its units row, then `store` writes the shots to SQLite with the original row kept as JSON,
-then `stats` groups shots into sessions by time gap, and `focus`, `report` and `dashboard`
-read those sessions.
+its units row, then `store` keeps the file as an upload and its shots in SQLite with the
+original row kept as JSON. The `shots` view picks one stored copy of each shot. Then `stats`
+groups shots into sessions by time gap, and `focus`, `report` and `dashboard` read those
+sessions.
 
 ## Setup
 

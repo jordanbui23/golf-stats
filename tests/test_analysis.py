@@ -133,30 +133,29 @@ def test_plan_round_trip_and_grading(tmp_path):
     first = session(iron_shots(face_to_path=5.0))
     focus = pick_focus(first, c)
     assert focus is not None
-    save_plan(make_plan(first, focus, c), c.plans)
+    saved = save_plan(make_plan(first, focus, c), c.plans)
+    saved.write_text('{"source_session": "tampered", "blocks": []}')
     later = split_sessions([{**s, "ts": s["ts"] + timedelta(days=7),
                              "face_to_path": 0.0 if i < 12 else 5.0} for i, s in enumerate(iron_shots(30))], 90)[0]
     sessions = [first, later]
-    plan = plan_for(later, sessions, c.plans)
+    plan = plan_for(later, sessions, c)
     assert plan and plan["source_session"] == first.id
-    assert plan_for(first, sessions, c.plans) is None
+    assert plan_for(first, sessions, c) is None
     grade = grade_plan(plan, later)[0]
     assert (grade["hits"], grade["n"], grade["baseline"]["hits"]) == (12, 20, 0)
 
 
-def test_a_plan_only_grades_the_next_session_of_the_same_player(tmp_path):
-    c = cfg(tmp_path)
+def test_a_plan_only_grades_the_next_session_of_the_same_player():
+    c = cfg()
     first = session(iron_shots(face_to_path=5.0))
-    focus = pick_focus(first, c)
-    assert focus is not None
-    save_plan(make_plan(first, focus, c), c.plans)
+    assert pick_focus(first, c) is not None
     moved = lambda days, player="J": [{**s, "ts": s["ts"] + timedelta(days=days), "player": player} for s in iron_shots(5)]
     second, third = session(moved(7)), session(moved(14))
     other = session(moved(7, "K"))
     sessions = [first, second, third, other]
-    assert plan_for(second, sessions, c.plans) is not None
-    assert plan_for(third, sessions, c.plans) is None
-    assert plan_for(other, sessions, c.plans) is None
+    assert plan_for(second, sessions, c) is not None
+    assert pick_focus(second, c) is None and plan_for(third, sessions, c) is None
+    assert plan_for(other, sessions, c) is None
 
 
 def test_unknown_club_names_cannot_carry_markup():

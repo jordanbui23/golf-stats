@@ -33,10 +33,6 @@ class Config:
         return self.data_dir / "inbox"
 
     @property
-    def archive(self) -> Path:
-        return self.data_dir / "raw"
-
-    @property
     def reports(self) -> Path:
         return self.data_dir / "reports"
 

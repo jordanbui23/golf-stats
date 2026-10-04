@@ -9,9 +9,8 @@ from .dashboard import write_dashboards
 from .focus import grade_plan, make_plan, pick_focus, plan_for, save_plan
 from .report import render_report, unit_suffix
 from .stats import Session, split_sessions
-from .store import connect, ingest_file, load_shots
+from .store import connect, ingest_file, list_uploads, load_shots
 from .synth import demo_exports
-from .tps_csv import ParseError
 
 
 def _sessions(cfg: Config) -> list[Session]:
@@ -32,7 +31,7 @@ def _rel(path: Path) -> str:
 
 def _write_report(session: Session, sessions: list[Session], cfg: Config, save: bool) -> tuple[Path, dict | None]:
     focus = pick_focus(session, cfg)
-    plan = plan_for(session, sessions, cfg.plans)
+    plan = plan_for(session, sessions, cfg)
     grades = grade_plan(plan, session) if plan else None
     plan_path = save_plan(make_plan(session, focus, cfg), cfg.plans) if (focus and save) else None
     text = render_report(session, sessions, focus, grades, _rel(plan_path) if plan_path else None)
@@ -70,19 +69,22 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
         return 1
     conn = connect(cfg.db_path)
     failed = 0
-    new_imports: set[int] = set()
+    new_uploads: set[int] = set()
     for path in paths:
         try:
-            res = ingest_file(conn, path, cfg.archive, replace=args.replace)
-        except (ParseError, UnicodeDecodeError, OSError) as exc:
+            res = ingest_file(conn, path, replace=args.replace)
+        except OSError as exc:
             print(f"{path.name}: not imported. {exc}")
+            failed += 1
+            continue
+        if res.error is not None:
+            print(f"{path.name}: not imported. {res.error}")
             failed += 1
             continue
         if res.already_imported:
             print(f"{path.name}: already imported, skipped.")
         else:
-            archived = _rel(res.archived_path) if res.archived_path else "?"
-            print(f"{path.name}: {res.shots_in_file} shots, {res.shots_added} new. Archived to {archived}.")
+            print(f"{path.name}: {res.shots_in_file} shots, {res.shots_added} new. Stored as upload {res.upload_id}.")
             units = ", ".join(f"{k} [{v}]" for k, v in res.source_units.items()
                               if k in ("club_speed", "carry", "curve", "low_point", "impact_offset"))
             print(f"  units: {units}")
@@ -92,8 +94,8 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
                 print(f"  warning: {w}")
             if res.conflicts and args.replace:
                 print(f"  replaced {res.replaced} stored shot(s) with this file's values.")
-            if (res.shots_added or res.replaced) and res.import_id is not None:
-                new_imports.add(res.import_id)
+            if (res.shots_added or res.replaced) and res.upload_id is not None:
+                new_uploads.add(res.upload_id)
         if res.conflicts and not args.replace:
             where = "it stays in the inbox, so run `bin/golf ingest --replace`" if in_inbox(path, cfg.inbox) \
                 else f"run `bin/golf ingest --replace {path}`"
@@ -105,7 +107,7 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
     conn.close()
 
     sessions = _sessions(cfg)
-    touched = [s for s in sessions if any(sh["import_id"] in new_imports for sh in s.shots)]
+    touched = [s for s in sessions if any(sh["upload_id"] in new_uploads for sh in s.shots)]
     for sess in touched:
         path, focus = _write_report(sess, sessions, cfg, save=True)
         who = f" ({sess.player})" if sess.player else ""
@@ -155,12 +157,31 @@ def cmd_dashboard(args: argparse.Namespace, cfg: Config) -> int:
 def cmd_demo(args: argparse.Namespace, cfg: Config) -> int:
     demo = load_config(data_dir=cfg.data_dir / "demo")
     if demo.data_dir.exists():
-        for p in [demo.db_path, *demo.plans.glob("*.json"), *demo.reports.glob("*.md"), *demo.archive.glob("*.csv")]:
+        for p in [demo.db_path, demo.db_path.with_name("golf.db-wal"), demo.db_path.with_name("golf.db-shm"),
+                  *demo.plans.glob("*.json"), *demo.reports.glob("*.md")]:
             p.unlink(missing_ok=True)
     demo.inbox.mkdir(parents=True, exist_ok=True)
     for name, text in demo_exports():
         (demo.inbox / name).write_text(text)
         cmd_ingest(argparse.Namespace(files=[], replace=False), demo)
+    return 0
+
+
+def cmd_uploads(args: argparse.Namespace, cfg: Config) -> int:
+    conn = connect(cfg.db_path)
+    uploads = list_uploads(conn)
+    conn.close()
+    if not uploads:
+        print("No uploads yet.")
+        return 0
+    for u in uploads:
+        state = "reverted" if u["reverted_at"] else "active"
+        if u["replace_stored"]:
+            state += ", replaces stored"
+        site = f"site {u['site_id']}" if u["site_id"] is not None else "not on site"
+        line = (f"{u['id']:4d}  {u['uploaded_at']}  {u['filename']}  by {u['uploaded_by']}  {site}  {state}  "
+                f"{u['shots_used']} of {u['shots_in_file']} shots used")
+        print(line + (f"  error: {u['error']}" if u["error"] else ""))
     return 0
 
 
@@ -180,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("dashboard", help="rebuild data/dashboard-<player>.html, one per player").set_defaults(
         func=cmd_dashboard)
     sub.add_parser("demo", help="build a dashboard from synthetic sessions in data/demo").set_defaults(func=cmd_demo)
+    sub.add_parser("uploads", help="list stored uploads").set_defaults(func=cmd_uploads)
     args = parser.parse_args(argv)
     return args.func(args, load_config(args.config))
 

@@ -45,7 +45,7 @@ def _club_block(shots: list[dict]) -> dict:
 def build_data(sessions: list[Session], cfg: Config, player: str = "") -> dict:
     out_sessions, shots = [], []
     for idx, sess in enumerate(sessions):
-        plan = plan_for(sess, sessions, cfg.plans)
+        plan = plan_for(sess, sessions, cfg)
         out_sessions.append({
             "id": sess.id, "label": sess.label, "player": sess.player, "start": sess.start.isoformat(),
             "shots": len(sess.shots), "counted": len(sess.counted),

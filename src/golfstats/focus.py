@@ -167,15 +167,13 @@ def save_plan(plan: dict, plans_dir: Path) -> Path:
     return path
 
 
-def plan_for(session: Session, sessions: list[Session], plans_dir: Path) -> dict | None:
+def plan_for(session: Session, sessions: list[Session], cfg: Config) -> dict | None:
     earlier = [s for s in sessions if s.player == session.player and s.start < session.start]
     if not earlier:
         return None
-    path = plans_dir / f"{max(earlier, key=lambda s: s.start).id}.json"
-    if not path.exists():
-        return None
-    plan = json.loads(path.read_text())
-    return plan if plan.get("player", session.player) == session.player else None
+    prev = max(earlier, key=lambda s: s.start)
+    focus = pick_focus(prev, cfg)
+    return make_plan(prev, focus, cfg) if focus else None
 
 
 def grade_plan(plan: dict, session: Session) -> list[dict]:

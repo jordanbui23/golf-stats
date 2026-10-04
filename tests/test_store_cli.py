@@ -12,17 +12,10 @@ import pytest
 
 from golfstats.__main__ import main
 from golfstats.config import load_config
-from golfstats.store import connect, ingest_file, load_shots
+from golfstats.store import connect, ingest_file, list_uploads, load_shots, upload_raw
 from golfstats.synth import synth_session_csv
 
 START = datetime(2026, 10, 1, 18, 0, 0)
-
-
-@pytest.fixture
-def cfg_file(tmp_path: Path) -> Path:
-    path = tmp_path / "config.toml"
-    path.write_text(f'data_dir = "{tmp_path / "data"}"\n')
-    return path
 
 
 def write_export(folder: Path, name: str, start: datetime = START, seed: int = 1, **kw) -> Path:
@@ -46,20 +39,21 @@ def write_conflicting(folder: Path, name: str, source: Path, column: str = "Club
     return path
 
 
-def test_ingest_archives_a_byte_identical_copy_and_counts_shots(tmp_path):
+def test_ingest_stores_a_byte_identical_copy_and_counts_shots(tmp_path):
     src = write_export(tmp_path / "in", "a.csv")
     conn = connect(tmp_path / "golf.db")
-    res = ingest_file(conn, src, tmp_path / "raw")
+    res = ingest_file(conn, src)
     assert (res.shots_in_file, res.shots_added) == (20, 20)
-    assert res.archived_path and res.archived_path.read_bytes() == src.read_bytes()
+    assert res.upload_id is not None and upload_raw(conn, res.upload_id) == src.read_bytes()
     assert len(load_shots(conn)) == 20
+    assert not (tmp_path / "raw").exists()
 
 
 def test_same_file_twice_is_skipped(tmp_path):
     src = write_export(tmp_path / "in", "a.csv")
     conn = connect(tmp_path / "golf.db")
-    ingest_file(conn, src, tmp_path / "raw")
-    again = ingest_file(conn, src, tmp_path / "raw")
+    ingest_file(conn, src)
+    again = ingest_file(conn, src)
     assert again.already_imported
     assert len(load_shots(conn)) == 20
 
@@ -67,9 +61,9 @@ def test_same_file_twice_is_skipped(tmp_path):
 def test_overlapping_exports_do_not_duplicate_shots(tmp_path):
     conn = connect(tmp_path / "golf.db")
     first = write_export(tmp_path / "in", "a.csv", plan=[("7 Iron", 20)])
-    ingest_file(conn, first, tmp_path / "raw")
+    ingest_file(conn, first)
     both = write_export(tmp_path / "in", "b.csv", plan=[("7 Iron", 20), ("Driver", 6)])
-    res = ingest_file(conn, both, tmp_path / "raw")
+    res = ingest_file(conn, both)
     assert (res.shots_in_file, res.shots_added) == (26, 6)
     assert len(load_shots(conn)) == 26
 
@@ -84,8 +78,11 @@ def test_cli_ingest_moves_good_files_and_keeps_bad_ones(cfg_file, capsys):
     out = capsys.readouterr().out
     assert "bad.csv: not imported" in out
     assert bad.exists() and not good.exists()
-    archived = list(cfg.archive.glob("*.csv"))
-    assert len(archived) == 1 and archived[0].read_bytes() == original
+    conn = connect(cfg.db_path)
+    stored = {u["filename"]: u for u in list_uploads(conn)}
+    assert stored["good.csv"]["error"] is None and upload_raw(conn, stored["good.csv"]["id"]) == original
+    assert stored["bad.csv"]["error"] and stored["bad.csv"]["shots_in_file"] == 0
+    assert not (cfg.data_dir / "raw").exists()
 
 
 def test_cli_files_outside_inbox_are_never_deleted(cfg_file, tmp_path):
@@ -122,13 +119,13 @@ def test_player_filter(cfg_file, tmp_path):
 def test_conflicting_values_are_reported_kept_then_replaced_on_request(tmp_path):
     conn = connect(tmp_path / "golf.db")
     first = write_export(tmp_path / "in", "a.csv", seed=1)
-    ingest_file(conn, first, tmp_path / "raw")
+    ingest_file(conn, first)
     before = {s["shot_key"]: s["club_speed"] for s in load_shots(conn)}
     other = write_conflicting(tmp_path / "in", "b.csv", first)
-    res = ingest_file(conn, other, tmp_path / "raw")
+    res = ingest_file(conn, other)
     assert (res.shots_added, len(res.conflicts), res.replaced) == (0, 20, 0)
     assert {s["shot_key"]: s["club_speed"] for s in load_shots(conn)} == before
-    again = ingest_file(conn, other, tmp_path / "raw", replace=True)
+    again = ingest_file(conn, other, replace=True)
     assert not again.already_imported and again.replaced == 20
     after = {s["shot_key"]: s["club_speed"] for s in load_shots(conn)}
     assert after.keys() == before.keys() and all(after[k] != before[k] for k in after)
@@ -183,8 +180,8 @@ def test_dashboard_payload_cannot_close_or_comment_out_its_script(tmp_path):
 def test_a_change_in_spin_rate_type_alone_is_a_conflict(tmp_path):
     conn = connect(tmp_path / "golf.db")
     first = write_export(tmp_path / "in", "a.csv", seed=1)
-    ingest_file(conn, first, tmp_path / "raw")
-    res = ingest_file(conn, write_conflicting(tmp_path / "in", "b.csv", first, "Spin Rate Type"), tmp_path / "raw")
+    ingest_file(conn, first)
+    res = ingest_file(conn, write_conflicting(tmp_path / "in", "b.csv", first, "Spin Rate Type"))
     assert len(res.conflicts) > 0 and res.shots_added == 0
 
 
@@ -206,13 +203,13 @@ def test_replacing_an_earlier_session_refreshes_later_reports(cfg_file, tmp_path
 def test_pending_conflicts_are_rechecked_once_another_file_resolves_them(tmp_path):
     conn = connect(tmp_path / "golf.db")
     first = write_export(tmp_path / "in", "a.csv", seed=1)
-    ingest_file(conn, first, tmp_path / "raw")
+    ingest_file(conn, first)
     b = write_conflicting(tmp_path / "in", "b.csv", first)
-    assert len(ingest_file(conn, b, tmp_path / "raw").conflicts) == 20
+    assert len(ingest_file(conn, b).conflicts) == 20
     c = tmp_path / "in" / "c.csv"
     c.write_bytes(b.read_bytes() + b"\r\n")
-    ingest_file(conn, c, tmp_path / "raw", replace=True)
-    assert ingest_file(conn, b, tmp_path / "raw").conflicts == []
+    ingest_file(conn, c, replace=True)
+    assert ingest_file(conn, b).conflicts == []
 
 
 def test_each_player_gets_a_dashboard_with_only_their_sessions(cfg_file, capsys):
