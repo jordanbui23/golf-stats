@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in - Golf stats</title>
+<link rel="stylesheet" href="/style.css">
+<script type="module" src="/js/login.js"></script>
+</head>
+<body class="center">
+<main class="narrow">
+  <form id="login" class="card" autocomplete="on">
+    <h1 class="brand">Golf <span>stats</span></h1>
+    <label>Username <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="64"></label>
+    <label>Password <input id="password" name="password" type="password" autocomplete="current-password" required></label>
+    <label class="check"><input id="remember" type="checkbox"> Keep me signed in on this device</label>
+    <p class="hint">On a shared sim PC, leave it unchecked and sign out when done.</p>
+    <button id="submit" type="submit" class="primary">Sign in</button>
+    <div id="status" role="status" aria-live="polite"></div>
+  </form>
+</main>
+</body>
+</html>

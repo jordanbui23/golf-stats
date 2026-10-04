@@ -37,6 +37,10 @@ class Config:
         return self.data_dir / "reports"
 
     @property
+    def site_path(self) -> Path:
+        return self.data_dir / "site.json"
+
+    @property
     def plans(self) -> Path:
         return self.data_dir / "plans"
 

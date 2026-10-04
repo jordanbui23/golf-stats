@@ -1,8 +1,10 @@
 # golf-stats
 
 Turns TrackMan 4 session exports into one practice focus per session, a graded plan for the
-next session, and a local dashboard. Everything runs on your own files. There is no server
-and no account.
+next session, and a local dashboard. Everything runs on your own files. An optional upload
+site on Cloudflare Pages lets each golfer sign in, upload exports from the sim PC, and see
+their dashboard. The site stores files and shows results. The analysis runs on your machine
+when you run `bin/golf sync`. See [Upload site](#upload-site).
 
 ![Dashboard built from synthetic demo sessions](docs/dashboard.png)
 
@@ -39,6 +41,55 @@ whose every decimal value has exactly three digits after the mark.
 Only the inbox's own entries are deleted. A file passed by path from elsewhere, or the target
 of a symlink placed in the inbox, is never deleted.
 
+## Upload site
+
+`docs/WEB.md` is the spec of record for the site and for `bin/golf sync`.
+
+Each golfer signs in, uploads one or more exports, and sees the upload at once with its raw
+shots. A file whose players are not the golfer's asks for confirmation first. Every upload
+keeps its time and uploader, a second copy of the same file is refused, and a wrong upload
+can be reverted and restored on the Uploads page. Nothing is deleted.
+
+The site runs no analysis. Run this on your machine when you want fresh stats:
+
+```
+bin/golf sync
+```
+
+Sync pushes files ingested locally, pulls every site upload and its state into
+`data/golf.db`, and publishes each upload's result and one dashboard per site user. Uploads
+newer than the last sync show as pending on the site.
+
+### Deploy
+
+The site needs a Cloudflare account and Node 22 or later. The free plan is enough.
+
+1. `cd web && npm install`
+2. `npx wrangler d1 create golf-stats`, then put the printed `database_id` in
+   `web/wrangler.toml`.
+3. `npx wrangler d1 migrations apply golf-stats --remote`
+4. `npx wrangler pages project create golf-stats`, then `npx wrangler pages deploy public`.
+   In the Pages project settings, bind D1 database `golf-stats` as `DB`.
+5. Make a sync token with `python3 -c "import secrets; print(secrets.token_hex(32))"`. Store it
+   with `npx wrangler pages secret put SYNC_TOKEN`. Every sync route answers 503 until it is
+   set, and it must be at least 32 characters.
+6. Save the site on your machine. Pipe the same token in, so it stays out of shell history:
+   `bin/golf site --url https://golf-stats.pages.dev --token-stdin`. This writes
+   `data/site.json` with mode 0600.
+7. Add each golfer with the player names their exports use:
+   `bin/golf user add jordan --player Jordan --display Jordan`. It asks for the password, or
+   reads one line from stdin with `--password-stdin`. `bin/golf user passwd`, `players`,
+   `list` and `remove` manage users later.
+
+### Run it locally
+
+`node web/dev/server.mjs --port 8788 --db /tmp/golf-site.db --token <token>` serves the same
+pages and API over `node:sqlite`, which needs Node 22.5 or later. Point `bin/golf site` at
+`http://127.0.0.1:8788`. `cd web && node --test test/` runs the site tests, and
+`.venv/bin/python -m pytest -q tests/test_site_integration.py` runs the box against it.
+To run that test against `npx wrangler pages dev public` instead, set `GOLF_TEST_SITE_URL`
+to its `http://127.0.0.1:<port>` and `GOLF_TEST_SITE_TOKEN` to its `SYNC_TOKEN` binding.
+
 ## Commands
 
 | Command | What it does |
@@ -49,6 +100,9 @@ of a symlink placed in the inbox, is never deleted.
 | `bin/golf dashboard` | Rebuild `data/dashboard-<player>.html` for every player |
 | `bin/golf demo` | Build a dashboard from four synthetic sessions in `data/demo/` |
 | `bin/golf uploads` | List stored uploads with their state and how many of their shots are used |
+| `bin/golf site --url URL [--token-stdin]` | Save the upload site's URL and sync token in `data/site.json` |
+| `bin/golf sync` | Push local uploads, pull site uploads, publish results and dashboards |
+| `bin/golf user add\|passwd\|players\|list\|remove` | Manage site users |
 
 ## How the focus is picked
 
@@ -84,6 +138,7 @@ guidance. `player.preferred_shape` moves the face to path window for a draw or a
 bin/golf                  CLI wrapper (uses .venv/bin/python when present)
 config.toml               player, session gap, focus thresholds and windows
 docs/TRACKMAN.md          what the export and parameters look like, with confidence labels
+docs/WEB.md               upload site and sync spec of record
 src/golfstats/
   fields.py               TPS header names -> canonical keys and units
   tps_csv.py              parser: sep line, header, units row, unit conversion, dates
@@ -95,7 +150,10 @@ src/golfstats/
   dashboard.py            builds the dashboard data
   dashboard.html          dashboard template (vanilla JS, inline SVG, works offline)
   synth.py                synthetic TPS exports for tests and the demo
+  sync.py                 upload site client: login keys, push, mirror, publish
 tests/                    pytest suite, offline
+web/                      upload site: public/ pages, functions/ and src/ API, migrations/ D1 schema,
+                          dev/ local server over node:sqlite, test/ node tests
 data/                     gitignored: golf.db, inbox/, reports/, plans/, dashboard-<player>.html
 ```
 

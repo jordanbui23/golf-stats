@@ -10,3 +10,5 @@ __pycache__/
 # OpenCode tooling dirs
 .opencode/
 .omo/
+web/node_modules/
+web/.wrangler/

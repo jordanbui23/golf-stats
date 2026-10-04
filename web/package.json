@@ -1,0 +1,12 @@
+{
+  "name": "golf-stats-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/",
+    "dev": "node dev/server.mjs --port 8788 --db .wrangler/dev.db"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  }
+}

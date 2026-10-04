@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from .report import render_report, unit_suffix
 from .stats import Session, split_sessions
 from .store import connect, ingest_file, list_uploads, load_shots
 from .synth import demo_exports
+from .sync import SiteError, key_hash, load_site, login_key, save_site, sync
 
 
 def _sessions(cfg: Config) -> list[Session]:
@@ -185,6 +187,77 @@ def cmd_uploads(args: argparse.Namespace, cfg: Config) -> int:
     return 0
 
 
+def _read_secret(args: argparse.Namespace, flag: str, prompt: str, confirm: bool) -> str:
+    if getattr(args, flag):
+        value = sys.stdin.readline().rstrip("\r\n")
+    else:
+        value = getpass.getpass(prompt)
+        if confirm and getpass.getpass("Again: ") != value:
+            raise ValueError("the two entries do not match")
+    if not value:
+        raise ValueError("it cannot be empty")
+    return value
+
+
+def cmd_site(args: argparse.Namespace, cfg: Config) -> int:
+    try:
+        token = _read_secret(args, "token_stdin", "Sync token: ", confirm=False)
+        save_site(cfg.site_path, args.url, token)
+    except ValueError as exc:
+        print(f"Site settings not saved: {exc}.")
+        return 1
+    print(f"Saved site settings to {_rel(cfg.site_path)} (mode 0600).")
+    return 0
+
+
+def cmd_sync(args: argparse.Namespace, cfg: Config) -> int:
+    try:
+        report = sync(cfg, load_site(cfg.site_path))
+    except (SiteError, FileNotFoundError, ValueError) as exc:
+        print(f"Sync failed: {exc}")
+        return 1
+    print(f"Pushed {report.pushed}, merged {report.merged}, pulled {report.pulled}"
+          + (f", downloaded again {report.redownloaded}" if report.redownloaded else "")
+          + f", state changes {report.state_changes}.")
+    for user, n in report.published.items():
+        print(f"  {user}: {n} session(s) published.")
+    print(f"Ledger version {report.ledger_version}.")
+    for err in report.errors:
+        print(f"  upload error: {err}")
+    return 1 if report.errors else 0
+
+
+def _password_hash(args: argparse.Namespace) -> str:
+    password = _read_secret(args, "password_stdin", f"Password for {args.name}: ", confirm=True)
+    return key_hash(login_key(args.name, password))
+
+
+def cmd_user(args: argparse.Namespace, cfg: Config) -> int:
+    try:
+        client = load_site(cfg.site_path)
+        if args.action == "list":
+            for u in client.users():
+                print(f"{u['username']}  {u['display_name']}  players: {', '.join(u['players']) or '(none)'}")
+            return 0
+        if args.action == "remove":
+            client.delete_user(args.name)
+            print(f"Removed {args.name}.")
+            return 0
+        if args.action == "add":
+            fields = {"display_name": args.display or args.name, "players": args.player,
+                      "key_hash": _password_hash(args)}
+        elif args.action == "passwd":
+            fields = {"key_hash": _password_hash(args)}
+        else:
+            fields = {"players": args.players}
+        user = client.put_user(args.name, fields)
+    except (SiteError, FileNotFoundError, ValueError) as exc:
+        print(f"User not changed: {exc}")
+        return 1
+    print(f"Saved {user['username']} ({user['display_name']}), players: {', '.join(user['players']) or '(none)'}.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="golf", description=__doc__)
     parser.add_argument("--config", type=Path, help="config file (default: config.toml in the repo)")
@@ -202,6 +275,29 @@ def main(argv: list[str] | None = None) -> int:
         func=cmd_dashboard)
     sub.add_parser("demo", help="build a dashboard from synthetic sessions in data/demo").set_defaults(func=cmd_demo)
     sub.add_parser("uploads", help="list stored uploads").set_defaults(func=cmd_uploads)
+    p = sub.add_parser("site", help="save the upload site's URL and sync token in data/site.json")
+    p.add_argument("--url", required=True)
+    p.add_argument("--token-stdin", action="store_true", help="read the token from one line of stdin")
+    p.set_defaults(func=cmd_site)
+    sub.add_parser("sync", help="push local uploads, pull the site's, publish dashboards").set_defaults(
+        func=cmd_sync)
+    p = sub.add_parser("user", help="manage site users")
+    users = p.add_subparsers(dest="action", required=True)
+    u = users.add_parser("add", help="create a user")
+    u.add_argument("name")
+    u.add_argument("--player", action="append", required=True, help="a player name in the exports (repeatable)")
+    u.add_argument("--display", help="display name (default: the username)")
+    u.add_argument("--password-stdin", action="store_true", help="read the password from one line of stdin")
+    u = users.add_parser("passwd", help="set a new password")
+    u.add_argument("name")
+    u.add_argument("--password-stdin", action="store_true", help="read the password from one line of stdin")
+    u = users.add_parser("players", help="set the players a user sees")
+    u.add_argument("name")
+    u.add_argument("players", nargs="+")
+    users.add_parser("list", help="list users")
+    u = users.add_parser("remove", help="delete a user")
+    u.add_argument("name")
+    p.set_defaults(func=cmd_user)
     args = parser.parse_args(argv)
     return args.func(args, load_config(args.config))
 
