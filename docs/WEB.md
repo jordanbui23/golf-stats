@@ -71,18 +71,27 @@ The password never reaches the server, and the server never runs a slow hash.
 
 ## Visibility
 
-A user can see an upload when `uploaded_by` equals their username, or when the upload's
+A user can see an upload when `uploaded_by_id` equals their user id, or when the upload's
 `players` list shares a name with the user's `players` list, ignoring case. The same rule
 gates download, revert, restore and the replace toggle. An upload the user cannot see
 answers 404. A revert affects every user, because it applies to the file.
 
+The rule runs in D1 through indexes, so a request reads only the uploads the user can see.
+`upload_players` holds one row per upload and player name, folded with JavaScript
+`toLowerCase()`. The user's names are folded the same way before they are bound. Uploads
+the box pushes have no `uploaded_by_id`. Deleting a user sets `uploaded_by_id` to NULL on their
+uploads, and user ids are never reused, so a new user with an old username sees only what
+their own players allow.
+
 ## D1 schema
 
-`web/migrations/0001_init.sql`, applied with `wrangler d1 migrations apply`:
+`web/migrations/0001_init.sql`, applied with `wrangler d1 migrations apply`. It has not been
+applied to a deployed database yet. Once it has, every schema change goes in a new
+migration file.
 
 ```sql
 CREATE TABLE users (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE COLLATE NOCASE,
   display_name TEXT NOT NULL,
   players TEXT NOT NULL DEFAULT '[]',
@@ -108,6 +117,7 @@ CREATE TABLE uploads (
   encoding TEXT NOT NULL CHECK (encoding IN ('gzip', 'identity')),
   uploaded_at TEXT NOT NULL,
   uploaded_by TEXT NOT NULL,
+  uploaded_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   players TEXT NOT NULL DEFAULT '[]',
   shots INTEGER,
   first_shot TEXT,
@@ -116,9 +126,16 @@ CREATE TABLE uploads (
   reverted_at TEXT,
   reverted_by TEXT,
   changed_version INTEGER NOT NULL,
-  result TEXT
+  result TEXT,
+  result_version INTEGER
 ) STRICT;
 CREATE INDEX uploads_sha ON uploads(sha256);
+CREATE INDEX uploads_uploader ON uploads(uploaded_by_id);
+CREATE TABLE upload_players (
+  name_lc TEXT NOT NULL,
+  upload_id INTEGER NOT NULL REFERENCES uploads(id),
+  PRIMARY KEY (name_lc, upload_id)
+) STRICT;
 CREATE TABLE upload_chunks (
   upload_uid TEXT NOT NULL REFERENCES uploads(uid),
   seq INTEGER NOT NULL,
@@ -142,6 +159,7 @@ Stored upload bytes are split into chunks of at most 1,000,000 bytes.
 
 An upload's `players`, `shots`, `first_shot` and `last_shot` start as the browser's display
 parse. The box replaces `players` and `shots` with its own parse when it publishes a result.
+`result_version` is the `ledger_version` of the publish that wrote `result`.
 
 ## User API (cookie)
 
@@ -153,9 +171,9 @@ Errors are `{"error": "<sentence for a person>"}` with a 4xx or 5xx status.
 | `POST /api/login` | JSON `{username, key, remember}`. 200 `{username, display_name}` and the cookie, 401 wrong username or password, 429 throttled |
 | `POST /api/logout` | Deletes the session, clears the cookie. 204 |
 | `GET /api/me` | `{username, display_name, players}`, 401 without a session |
-| `GET /api/dashboard` | `{ledger_version, analysis, pending}`. `analysis` is null or `{published_at, based_on_version, sessions}`. `pending` is a list of upload summaries |
+| `GET /api/dashboard` | `{ledger_version, analysis, pending}`. `analysis` is null or `{published_at, based_on_version, sessions}`. `pending` is a list of upload summaries, newest first, at most 500 |
 | `GET /api/dashboard/html` | The published dashboard HTML, stored gzipped and returned with `Content-Encoding: gzip`. 404 when there is none or it has no sessions |
-| `GET /api/uploads` | `{uploads}`: visible upload summaries, newest first |
+| `GET /api/uploads` | `{uploads}`: visible upload summaries, newest first, at most 500 |
 | `POST /api/uploads` | Multipart, see below. 201 `{upload, duplicate: false}`, 200 `{upload, duplicate: true}` |
 | `GET /api/uploads/:id/raw` | The original file as `text/csv`. Gzip storage is returned with `Content-Encoding: gzip`. `Content-Disposition: attachment` unless `?inline=1` |
 | `POST /api/uploads/:id/revert` | Marks it reverted by this user. Idempotent. 200 `{upload}` |
@@ -166,12 +184,19 @@ Upload summary: `{id, filename, size, uploaded_at, uploaded_by, players, shots, 
 last_shot, replace_stored, reverted_at, reverted_by, changed_version, result, pending}` where
 `players` and `result` are parsed JSON and `pending` follows the ledger rules.
 
-Upload multipart fields: `file` (the stored bytes), `encoding` (`gzip` or `identity`),
-`sha256` (hex of the original bytes), `size` (original byte count), `filename`, `players`
-(JSON array of strings), `shots`, `first_shot`, `last_shot`. Limits: stored bytes 1 to
-16,000,000; `size` up to 64,000,000; filename up to 200 characters; at most 50 players of up
-to 100 characters each. The duplicate check runs on `sha256` against active uploads. When the
-duplicate is not visible to the user, the answer is `{upload: null, duplicate: true}`.
+Upload multipart fields: `file` (the original bytes), `encoding` (must be `identity`),
+`sha256` (hex of the file), `size` (byte count), `filename`, `players` (JSON array of
+strings), `shots`, `first_shot`, `last_shot`. Limits: 1 to 16,000,000 bytes; filename up to
+200 characters; at most 50 players of up to 100 characters each. The site hashes the file
+and answers 400 when it does not match `sha256`, so a user cannot claim another file's hash.
+The duplicate check runs on `sha256` against active uploads. When the duplicate is not
+visible to the user, the answer is `{upload: null, duplicate: true}`.
+
+Hashing and reading the form cost about 7 ms of CPU per MB. That is an observation from
+2026-10-04, timing WebCrypto SHA-256 and `Response.formData()` in Node 24 on the dev box.
+A 20-shot export is about 15 KB. A file above about 1 MB can exceed the free plan's 10 ms
+limit, and then the request fails and nothing is stored. For a large library export, use
+`bin/golf ingest` and `bin/golf sync` instead.
 
 `/api/dashboard/html` carries its own CSP: `default-src 'none'; script-src 'unsafe-inline';
 style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none';
@@ -184,8 +209,8 @@ the dashboard runs in an opaque origin with no access to the cookie or the API.
 |---|---|
 | `GET /api/sync/state` | One D1 batch: `{ledger_version, uploads, users}`. `uploads` items: `{id, uid, sha256, filename, size, encoding, uploaded_at, uploaded_by, replace_stored, reverted_at, changed_version}`. `users` items: `{username, display_name, players}` |
 | `GET /api/sync/uploads/:id/raw` | Stored bytes as `application/octet-stream`, header `X-Encoding: gzip` or `identity`, no `Content-Encoding` |
-| `POST /api/sync/uploads` | JSON `{filename, sha256, size, encoding, data_b64, uploaded_at, players, shots, first_shot, last_shot, replace_stored}`. `uploaded_by` is `box`. `replace_stored` is optional and applies only when the upload is created. Duplicate check runs against every upload with that SHA-256, active or not, and returns the newest: 200 `{upload, duplicate: true}`. Otherwise 201 `{upload, duplicate: false}` |
-| `POST /api/sync/publish` | JSON `{ledger_version, results, dashboards}`. `results`: `[{id, result}]`, also copies `result.players` and `result.shots_in_file` into the row. `dashboards`: `[{username, sessions, html_gz_b64}]`, where `html_gz_b64` is null when `sessions` is 0. An analysis row is written only when the incoming `ledger_version` is not lower than the stored `based_on_version`. 400 when `ledger_version` is newer than the site's. 200 `{published: <count>}` |
+| `POST /api/sync/uploads` | JSON `{filename, sha256, size, encoding, data_b64, uploaded_at, players, shots, first_shot, last_shot, replace_stored}`. `uploaded_by` is `box`. `replace_stored` is optional and applies only when the upload is created. `players` may hold up to 200 names. Duplicate check runs against every upload with that SHA-256, active or not, and returns the newest: 200 `{upload, duplicate: true}`. Otherwise 201 `{upload, duplicate: false}` |
+| `POST /api/sync/publish` | JSON `{ledger_version, results, dashboards}`. `results`: `[{id, result}]`, also copies `result.players` and `result.shots_in_file` into the row and rewrites the upload's `upload_players` rows, only when the row's `result_version` is NULL or not above the incoming `ledger_version`. The box may send up to 200 player names, because it adds alias targets. `dashboards`: `[{username, sessions, html_gz_b64}]`, where `html_gz_b64` is null when `sessions` is 0. An analysis row is written only when the incoming `ledger_version` is not lower than the stored `based_on_version`. 400 when `ledger_version` is newer than the site's. 200 `{published: <count>}` |
 | `GET /api/sync/users` | `{users: [{username, display_name, players, created_at}]}` |
 | `PUT /api/sync/users/:username` | JSON with any of `display_name`, `players`, `key_hash`. Creating a user requires `key_hash`, and `display_name` defaults to the username. A new `key_hash` deletes that user's sessions. 200 `{user}` |
 | `DELETE /api/sync/users/:username` | Deletes the user, their sessions and their analysis. 204, or 404 |
@@ -214,8 +239,8 @@ parser warnings.
   result, a toggle between keeping stored values and using this file's values when the result
   has conflicts, Revert or Restore, and Download.
 
-Before sending a file, the browser hashes it, runs the display parse, and gzips it with
-`CompressionStream` when the browser has it. A file the display parse cannot read as a
+Before sending a file, the browser hashes it and runs the display parse. It sends the file
+uncompressed, so the site can check the hash. A file the display parse cannot read as a
 TrackMan export with at least one shot is not sent. A file whose players share no name with the user's players asks
 for confirmation first: "This file has shots for Christian, not you. Upload anyway?".
 
@@ -247,7 +272,12 @@ Local store, `src/golfstats/store.py`:
 - A file that fails to parse is still stored, with `error` set and no shots.
 - `bin/golf ingest --replace` sets `replace_stored` only when the file has conflicts. On a
   file that is already marked it changes nothing. To make it win over a later upload that
-  also replaces, revert the later one.
+  also replaces, revert the later one. On a file that is already on the site it changes
+  nothing and points to the site's Uploads page, because sync takes the site's choice. The
+  file stays in the inbox, and the command exits 1.
+- When a download does not match the site's SHA-256, a new row is stored with `error` set
+  and no shots. A known row keeps its old bytes and gets `error` and no shots. The next sync
+  downloads it again.
 - A local upload keeps a local time with no zone and `uploaded_by = 'cli'`. Sync sends that
   time as UTC, and the site records the upload as `box`. A mirrored upload keeps the site's
   time and uploader.
@@ -262,18 +292,25 @@ Local store, `src/golfstats/store.py`:
 `bin/golf sync`, in order:
 
 1. Push each active local upload with no `site_id` and no parse error to
-   `POST /api/sync/uploads`, and record the id. When the site answers with a duplicate that
-   is already mirrored here, the local copy holds the same bytes, so it is deleted. This
-   also happens when the site copy is reverted, because the duplicate check includes
-   reverted uploads. To bring such a file back, restore it on the site.
+   `POST /api/sync/uploads`, and record the id. `players` is sent with the alias targets
+   added. When the site answers with a duplicate that is already mirrored here, and the
+   mirrored copy parses and its bytes hash to the same SHA-256, the local copy is deleted.
+   Otherwise the local copy is kept and reported. This also happens when the site copy is
+   reverted, because the duplicate check includes reverted uploads. To bring such a file
+   back, restore it on the site.
 2. Read `GET /api/sync/state`.
 3. Mirror each site upload: download new ones, check the SHA-256, store them with their site
    id, uploader, time and state; copy `reverted_at` and `replace_stored` onto known ones. The
-   site's state wins.
+   site's state wins. A gzip download is decompressed to at most `size + 1` bytes, so an
+   oversized one fails the hash check instead of filling memory.
 4. Publish a result for every site upload, and one dashboard per site user, built from the
    shots of that user's players with the player renamed to the user's display name, at the
    `ledger_version` read in step 2. `[player.aliases]` in `config.toml` merges player names
-   before the user's players are matched, as it does for the local dashboard.
+   before the user's players are matched, as it does for the local dashboard. Each result's
+   `players` lists the file's names plus their alias targets, so the site shows an upload
+   to the user whose dashboard uses it. When an active upload failed its hash check in step
+   3, the results are published and the dashboards are not, because they would miss that
+   file. Reverting it on the site, or a later good download, unblocks them.
 
 Site settings live in `data/site.json` as `{url, token}` with mode 0600, written by
 `bin/golf site`. The URL must be `https://`, or `http://` to `localhost` or `127.0.0.1`.

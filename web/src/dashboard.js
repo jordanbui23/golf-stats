@@ -1,17 +1,25 @@
 import { json, notFound } from "./http.js";
-import { UPLOAD_COLUMNS, analysisFor, canSee, isPending, ledgerVersion, summary } from "./db.js";
+import { LIST_LIMIT, UPLOAD_COLUMNS, analysisFor, ledgerVersion, summary, visibleTo } from "./db.js";
 
 export const DASHBOARD_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 
 export async function dashboard(user, env) {
   const db = env.DB;
+  const visible = visibleTo(user);
   const [version, analysis, { results }] = await Promise.all([
     ledgerVersion(db),
     analysisFor(db, user.id),
-    db.prepare(`SELECT ${UPLOAD_COLUMNS} FROM uploads ORDER BY id DESC`).all(),
+    db
+      .prepare(
+        `SELECT ${UPLOAD_COLUMNS} FROM uploads u WHERE ${visible.sql}
+         AND u.changed_version > COALESCE((SELECT based_on_version FROM analyses WHERE user_id = ?), -1)
+         ORDER BY u.id DESC LIMIT ${LIST_LIMIT}`,
+      )
+      .bind(...visible.params, user.id)
+      .all(),
   ]);
-  const pending = results.filter((r) => canSee(user, r) && isPending(r, analysis)).map((r) => summary(r, analysis));
+  const pending = results.map((r) => summary(r, analysis));
   return json({
     ledger_version: version,
     analysis: analysis ? { published_at: analysis.published_at, based_on_version: analysis.based_on_version, sessions: analysis.sessions } : null,

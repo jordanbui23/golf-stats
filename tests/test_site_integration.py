@@ -92,15 +92,15 @@ class Browser:
 
     def upload(self, path: Path, players: list[str]):
         original = path.read_bytes()
-        fields = {"encoding": "gzip", "sha256": hashlib.sha256(original).hexdigest(), "size": str(len(original)),
+        fields = {"encoding": "identity", "sha256": hashlib.sha256(original).hexdigest(), "size": str(len(original)),
                   "filename": path.name, "players": json.dumps(players), "shots": "20"}
         boundary = "----golf" + secrets.token_hex(8)
         buf = io.BytesIO()
         for name, value in fields.items():
             buf.write(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode())
         buf.write(f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{path.name}\"\r\n"
-                  "Content-Type: application/gzip\r\n\r\n".encode())
-        buf.write(gzip.compress(original))
+                  "Content-Type: text/csv\r\n\r\n".encode())
+        buf.write(original)
         buf.write(f"\r\n--{boundary}--\r\n".encode())
         status, _, raw = self.call("POST", "/api/uploads", buf.getvalue(), f"multipart/form-data; boundary={boundary}")
         return status, json.loads(raw)

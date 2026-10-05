@@ -93,6 +93,7 @@ class IngestResult:
     conflicts: list[str] = field(default_factory=list)
     replaced: int = 0
     error: str | None = None
+    site_id: int | None = None
 
 
 @contextmanager
@@ -220,10 +221,14 @@ def mirror_upload(conn: sqlite3.Connection, data: bytes, *, site_id: int, filena
             cur = conn.execute("INSERT INTO uploads (sha256, filename, uploaded_at, uploaded_by, raw, replace_stored,"
                                " reverted_at, site_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (*values, site_id))
             upload_id = int(cur.lastrowid or 0)
-        else:
+        elif error is None:
             upload_id = known["id"]
             conn.execute("UPDATE uploads SET sha256 = ?, filename = ?, uploaded_at = ?, uploaded_by = ?, raw = ?,"
                          " replace_stored = ?, reverted_at = ? WHERE id = ?", (*values, upload_id))
+        else:
+            upload_id = known["id"]
+            conn.execute("UPDATE uploads SET filename = ?, uploaded_at = ?, uploaded_by = ?, replace_stored = ?,"
+                         " reverted_at = ? WHERE id = ?", (*values[1:4], *values[5:], upload_id))
         _store_parse(conn, upload_id, data, error)
     return upload_id
 
@@ -272,7 +277,7 @@ def _won(conn: sqlite3.Connection, upload_id: int, keys: list[str] | None = None
     return sum(1 for k in keys if k in won)
 
 
-def _sole(conn: sqlite3.Connection, upload_id: int) -> int:
+def _count_exclusive_shots(conn: sqlite3.Connection, upload_id: int) -> int:
     return conn.execute(
         "SELECT COUNT(*) FROM upload_shots s WHERE s.upload_id = ? AND NOT EXISTS (SELECT 1 FROM upload_shots o"
         " JOIN uploads u ON u.id = o.upload_id WHERE o.shot_key = s.shot_key AND o.upload_id != s.upload_id"
@@ -316,7 +321,8 @@ def ingest_file(conn: sqlite3.Connection, path: Path, replace: bool = False) -> 
             conflicts = conflicts_of(conn, known["id"])
             res = IngestResult(path, sha, already_imported=True, upload_id=known["id"],
                                shots_in_file=known["shots_in_file"], conflicts=conflicts)
-            if replace and conflicts and not known["replace_stored"]:
+            res.site_id = known["site_id"]
+            if replace and conflicts and not known["replace_stored"] and known["site_id"] is None:
                 set_replace(conn, known["id"], True)
                 res.already_imported, res.replaced = False, _won(conn, known["id"], conflicts)
             return res
@@ -325,7 +331,7 @@ def ingest_file(conn: sqlite3.Connection, path: Path, replace: bool = False) -> 
                            unmapped=up.unmapped, warnings=up.warnings, source_units=up.source_units, error=up.error)
         if up.error is not None:
             return res
-        res.shots_added = _sole(conn, up.upload_id)
+        res.shots_added = _count_exclusive_shots(conn, up.upload_id)
         res.conflicts = conflicts_of(conn, up.upload_id)
         if replace and res.conflicts:
             set_replace(conn, up.upload_id, True)
@@ -418,7 +424,8 @@ def migrate(conn: sqlite3.Connection, db_path: Path) -> Path:
 
 
 def _verify(conn: sqlite3.Connection) -> None:
-    cols = ", ".join(["shot_key", *_COMPARED])
+    preserved = list(_SHOT_COLS)
+    cols = ", ".join(["shot_key", *preserved])
     old = {r["shot_key"]: r for r in conn.execute(f"SELECT {cols} FROM shots")}
     new = {r["shot_key"]: r for r in conn.execute(f"SELECT {cols} FROM ({WINNERS})")}
     if old.keys() != new.keys():
@@ -426,6 +433,6 @@ def _verify(conn: sqlite3.Connection) -> None:
         raise MigrationError(f"migration check failed: {len(missing)} stored shot(s) missing, {len(extra)} extra, "
                              f"first {(missing or extra)[0]}")
     for key, row in old.items():
-        bad = [c for c in _COMPARED if not _same(row[c], new[key][c])]
+        bad = [c for c in preserved if not _same(row[c], new[key][c])]
         if bad:
             raise MigrationError(f"migration check failed: shot {key} differs in {', '.join(bad)}")

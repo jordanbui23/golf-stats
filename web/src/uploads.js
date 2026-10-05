@@ -1,16 +1,18 @@
 import { HttpError, bad, json, notFound, nowIso, readBody, readJson } from "./http.js";
-import { randomHex } from "./crypto.js";
+import { randomHex, sha256Hex } from "./crypto.js";
 import {
   LEDGER_VERSION,
+  LIST_LIMIT,
   UPLOAD_COLUMNS,
   analysisFor,
   bumpWhere,
-  canSee,
   insertUploadStatements,
   storedBytes,
   summary,
   uploadById,
   uploadByUid,
+  visibleTo,
+  visibleUploadById,
 } from "./db.js";
 import {
   LIMITS,
@@ -29,9 +31,12 @@ const SMALL_JSON_LIMIT = 4096;
 
 export async function listUploads(user, env) {
   const db = env.DB;
-  const analysis = await analysisFor(db, user.id);
-  const { results } = await db.prepare(`SELECT ${UPLOAD_COLUMNS} FROM uploads ORDER BY id DESC`).all();
-  return json({ uploads: results.filter((r) => canSee(user, r)).map((r) => summary(r, analysis)) });
+  const visible = visibleTo(user);
+  const [analysis, { results }] = await Promise.all([
+    analysisFor(db, user.id),
+    db.prepare(`SELECT ${UPLOAD_COLUMNS} FROM uploads u WHERE ${visible.sql} ORDER BY u.id DESC LIMIT ${LIST_LIMIT}`).bind(...visible.params).all(),
+  ]);
+  return json({ uploads: results.map((r) => summary(r, analysis)) });
 }
 
 function formText(form, name) {
@@ -44,22 +49,26 @@ function formText(form, name) {
 async function parseUploadForm(request) {
   const type = request.headers.get("Content-Type") || "";
   if (!/^multipart\/form-data\s*;/i.test(type)) throw bad("Send the upload as multipart/form-data.");
-  const bytes = await readBody(request, MULTIPART_LIMIT);
+  const body = await readBody(request, MULTIPART_LIMIT);
   let form;
   try {
-    form = await new Response(bytes, { headers: { "Content-Type": type } }).formData();
+    form = await new Response(body, { headers: { "Content-Type": type } }).formData();
   } catch {
     throw bad("The upload form could not be read.");
   }
   const file = form.get("file");
   if (file === null || typeof file === "string") throw bad("The upload needs a file.");
   const encoding = encodingField(formText(form, "encoding"));
+  if (encoding !== "identity") throw bad("Upload the file uncompressed, with encoding identity.");
   const size = sizeField(formText(form, "size"));
+  const bytes = storedBytesField(new Uint8Array(await file.arrayBuffer()), encoding, size);
+  const sha256 = sha256Field(formText(form, "sha256"));
+  if ((await sha256Hex(bytes)) !== sha256) throw bad("The file does not match its sha256.");
   return {
-    bytes: storedBytesField(new Uint8Array(await file.arrayBuffer()), encoding, size),
+    bytes,
     encoding,
     size,
-    sha256: sha256Field(formText(form, "sha256")),
+    sha256,
     filename: filenameField(formText(form, "filename")),
     players: playersJsonField(formText(form, "players")),
     shots: shotsField(formText(form, "shots")),
@@ -74,22 +83,23 @@ export async function createUpload(request, user, env) {
   fields.uid = randomHex(16);
   fields.uploaded_at = nowIso();
   fields.uploaded_by = user.username;
+  fields.uploaded_by_id = user.id;
   const guard = "NOT EXISTS (SELECT 1 FROM uploads WHERE sha256 = ? AND reverted_at IS NULL)";
   await db.batch(insertUploadStatements(db, fields, guard, [fields.sha256]));
   const analysis = await analysisFor(db, user.id);
   const created = await uploadByUid(db, fields.uid);
   if (created) return json({ upload: summary(created, analysis), duplicate: false }, 201);
+  const visible = visibleTo(user);
   const existing = await db
-    .prepare(`SELECT ${UPLOAD_COLUMNS} FROM uploads WHERE sha256 = ? AND reverted_at IS NULL ORDER BY id LIMIT 1`)
-    .bind(fields.sha256)
+    .prepare(`SELECT ${UPLOAD_COLUMNS} FROM uploads u WHERE u.sha256 = ? AND u.reverted_at IS NULL AND ${visible.sql} ORDER BY u.id LIMIT 1`)
+    .bind(fields.sha256, ...visible.params)
     .first();
-  const visible = existing && canSee(user, existing);
-  return json({ upload: visible ? summary(existing, analysis) : null, duplicate: true }, 200);
+  return json({ upload: existing ? summary(existing, analysis) : null, duplicate: true }, 200);
 }
 
 async function visibleUpload(db, user, id) {
-  const row = id === null ? null : await uploadById(db, id);
-  if (!row || !canSee(user, row)) throw notFound("No such upload.");
+  const row = id === null ? null : await visibleUploadById(db, user, id);
+  if (!row) throw notFound("No such upload.");
   return row;
 }
 

@@ -48,7 +48,8 @@ of a symlink placed in the inbox, is never deleted.
 Each golfer signs in, uploads one or more exports, and sees the upload at once with its raw
 shots. A file whose players are not the golfer's asks for confirmation first. Every upload
 keeps its time and uploader, a second copy of the same file is refused, and a wrong upload
-can be reverted and restored on the Uploads page. Nothing is deleted.
+can be reverted and restored on the Uploads page. Nothing is deleted. A file above about
+1 MB can exceed the free plan's CPU limit. Ingest a big library export locally and sync it.
 
 The site runs no analysis. Run this on your machine when you want fresh stats:
 

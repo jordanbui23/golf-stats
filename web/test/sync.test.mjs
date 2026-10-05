@@ -188,6 +188,23 @@ test("publish refuses a ledger_version above the current one and skips a lower o
   assert.deepEqual(await same.json(), { published: 1 });
 });
 
+test("an older publish does not overwrite a newer result or its players", async () => {
+  const { site, jordan } = await siteWithJordan();
+  const id = (await (await site.upload(jordan, fixture("jordan.csv"))).json()).upload.id;
+  await site.request("POST", `/api/uploads/${id}/revert`, { cookie: jordan });
+  const newer = { ok: true, shots_in_file: 20, players: ["Jordan", "JordanBui"] };
+  await site.sync("POST", "/api/sync/publish", { ledger_version: 2, results: [{ id, result: newer }], dashboards: [] });
+  const older = { ok: true, shots_in_file: 3, players: ["Someone"] };
+  await site.sync("POST", "/api/sync/publish", { ledger_version: 1, results: [{ id, result: older }], dashboards: [] });
+  const r = site.db.prepare("SELECT result, players, shots, result_version FROM uploads WHERE id = ?").get(id);
+  const names = site.db.prepare("SELECT name_lc FROM upload_players WHERE upload_id = ? ORDER BY name_lc").all(id).map((p) => p.name_lc);
+  assert.deepEqual(JSON.parse(r.result), newer);
+  assert.deepEqual([JSON.parse(r.players), names, r.shots, r.result_version], [["Jordan", "JordanBui"], ["jordan", "jordanbui"], 20, 2]);
+  await site.sync("POST", "/api/sync/publish", { ledger_version: 2, results: [{ id, result: { ...newer, shots_in_file: 19, players: ["Jordan"] } }], dashboards: [] });
+  assert.equal(site.db.prepare("SELECT shots FROM uploads WHERE id = ?").get(id).shots, 19);
+  assert.deepEqual(site.db.prepare("SELECT name_lc FROM upload_players WHERE upload_id = ?").all(id).map((p) => p.name_lc), ["jordan"]);
+});
+
 test("publish validation answers 400 and writes nothing", async () => {
   const { site, jordan } = await siteWithJordan();
   const id = (await (await site.upload(jordan, fixture("jordan.csv"))).json()).upload.id;

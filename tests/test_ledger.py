@@ -271,13 +271,17 @@ def test_a_missing_archive_is_named(tmp_path):
     assert tables(db)["shots"] == "table"
 
 
-def test_a_view_that_would_differ_from_the_old_table_rolls_back(tmp_path):
+@pytest.mark.parametrize("column, change", [
+    ("carry", "carry + 10"), ("raw", "raw || ' '"), ("club_code", "'XX'"), ("ts", "ts || '.5'"),
+    ("player", "player || 'x'"),
+])
+def test_a_view_that_would_differ_from_the_old_table_rolls_back(tmp_path, column, change):
     db, _ = old_db(tmp_path)
     conn = sqlite3.connect(db)
     with conn:
-        conn.execute("UPDATE shots SET carry = carry + 10 WHERE rowid = (SELECT MIN(rowid) FROM shots)")
+        conn.execute(f"UPDATE shots SET {column} = {change} WHERE rowid = (SELECT MIN(rowid) FROM shots)")
     conn.close()
     before = old_shots(db)
-    with pytest.raises(MigrationError, match="differs in carry"):
+    with pytest.raises(MigrationError, match=f"differs in {column}"):
         connect(db)
     assert old_shots(db) == before and "uploads" not in tables(db)

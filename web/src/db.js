@@ -20,10 +20,29 @@ export function parsePlayers(text) {
   return Array.isArray(value) ? value.filter((p) => typeof p === "string") : [];
 }
 
-export function canSee(user, row) {
-  if (String(row.uploaded_by).toLowerCase() === user.username.toLowerCase()) return true;
-  const mine = new Set(user.players.map((p) => p.toLowerCase()));
-  return parsePlayers(row.players).some((p) => mine.has(p.toLowerCase()));
+export const LIST_LIMIT = 500;
+
+export function lowerNames(names) {
+  return [...new Set(names.map((p) => p.toLowerCase()))];
+}
+
+export function visibleTo(user) {
+  return {
+    sql: `u.id IN (SELECT p.upload_id FROM json_each(?) j CROSS JOIN upload_players p ON p.name_lc = j.value
+           UNION ALL SELECT o.id FROM uploads o WHERE o.uploaded_by_id = ?)`,
+    params: [JSON.stringify(lowerNames(user.players)), user.id],
+  };
+}
+
+export function playerRowsStatement(db, players, where, ...params) {
+  return db
+    .prepare(`INSERT INTO upload_players (name_lc, upload_id) SELECT j.value, u.id FROM uploads u, json_each(?) j WHERE ${where}`)
+    .bind(JSON.stringify(lowerNames(players)), ...params);
+}
+
+export async function visibleUploadById(db, user, id) {
+  const visible = visibleTo(user);
+  return db.prepare(`SELECT ${UPLOAD_COLUMNS} FROM uploads u WHERE u.id = ? AND ${visible.sql}`).bind(id, ...visible.params).first();
 }
 
 export function isPending(row, analysis) {
@@ -96,8 +115,8 @@ export function insertUploadStatements(db, fields, guard, guardParams) {
     bumpWhere(db, guard, ...guardParams),
     db
       .prepare(
-        `INSERT INTO uploads (uid, sha256, filename, size, encoding, uploaded_at, uploaded_by, players, shots, first_shot, last_shot, replace_stored, changed_version)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${LEDGER_VERSION} WHERE ${guard}`,
+        `INSERT INTO uploads (uid, sha256, filename, size, encoding, uploaded_at, uploaded_by, uploaded_by_id, players, shots, first_shot, last_shot, replace_stored, changed_version)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${LEDGER_VERSION} WHERE ${guard}`,
       )
       .bind(
         fields.uid,
@@ -107,6 +126,7 @@ export function insertUploadStatements(db, fields, guard, guardParams) {
         fields.encoding,
         fields.uploaded_at,
         fields.uploaded_by,
+        fields.uploaded_by_id ?? null,
         JSON.stringify(fields.players),
         fields.shots,
         fields.first_shot,
@@ -114,6 +134,7 @@ export function insertUploadStatements(db, fields, guard, guardParams) {
         fields.replace_stored ? 1 : 0,
         ...guardParams,
       ),
+    playerRowsStatement(db, fields.players, "u.uid = ?", fields.uid),
   ];
   const bytes = fields.bytes;
   for (let seq = 0, offset = 0; offset < bytes.byteLength; seq++, offset += CHUNK_BYTES) {

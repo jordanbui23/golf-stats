@@ -5,6 +5,7 @@ export const LIMITS = {
   sizeMax: 64_000_000,
   filename: 200,
   players: 50,
+  boxPlayers: 200,
   player: 100,
   shotText: 100,
   displayName: 100,
@@ -35,8 +36,8 @@ export function sizeField(value) {
   return n;
 }
 
-export function playersField(value, name = "players") {
-  if (!Array.isArray(value) || value.length > LIMITS.players) throw bad(`${name} must be a list of at most ${LIMITS.players} names.`);
+export function playersField(value, name = "players", max = LIMITS.players) {
+  if (!Array.isArray(value) || value.length > max) throw bad(`${name} must be a list of at most ${max} names.`);
   for (const p of value) {
     if (typeof p !== "string" || p.length < 1 || p.length > LIMITS.player || CONTROL.test(p)) {
       throw bad(`Each name in ${name} must be 1 to ${LIMITS.player} characters.`);

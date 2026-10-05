@@ -2,20 +2,9 @@ import { parseExport } from "./csv.js";
 import { ApiError, api, el, fmtDate, joinNames, plural } from "./common.js";
 
 const STORED_MAX = 16_000_000;
-const SIZE_MAX = 64_000_000;
 
 function hex(buffer) {
   return Array.from(new Uint8Array(buffer), (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function gzip(bytes) {
-  if (typeof CompressionStream !== "function") return null;
-  try {
-    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
-    return new Uint8Array(await new Response(stream).arrayBuffer());
-  } catch {
-    return null;
-  }
 }
 
 function confirmInPage(container, text) {
@@ -46,7 +35,7 @@ function line(container, text, kind) {
 
 async function uploadOne(file, me, container) {
   const name = file.name || "upload.csv";
-  if (file.size > SIZE_MAX) return line(container, `${name} is larger than 64 MB, so it was not uploaded.`, "error");
+  if (file.size > STORED_MAX) return line(container, `${name} is larger than 16 MB, so it was not uploaded.`, "error");
   const progress = line(container, `Reading ${name}.`, "info");
   const original = new Uint8Array(await file.arrayBuffer());
   const sha256 = hex(await crypto.subtle.digest("SHA-256", original));
@@ -63,16 +52,10 @@ async function uploadOne(file, me, container) {
     if (!ok) return line(container, `${name} was skipped.`, "info");
     container.append(progress);
   }
-  const packed = await gzip(original);
-  const stored = packed ?? original;
-  if (stored.byteLength > STORED_MAX) {
-    progress.remove();
-    return line(container, `${name} is too large to store, so it was not uploaded.`, "error");
-  }
   progress.textContent = `Uploading ${name}.`;
   const form = new FormData();
-  form.set("file", new Blob([stored]), name);
-  form.set("encoding", packed ? "gzip" : "identity");
+  form.set("file", new Blob([original]), name);
+  form.set("encoding", "identity");
   form.set("sha256", sha256);
   form.set("size", String(original.byteLength));
   form.set("filename", name.slice(0, 200));

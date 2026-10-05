@@ -267,21 +267,76 @@ def test_a_duplicate_the_site_already_holds_is_linked_and_takes_the_site_state(t
 def test_a_bad_download_is_an_upload_error_and_is_fetched_again_next_time(tmp_path):
     cfg = cfg_at(tmp_path)
     data = write_export(tmp_path / "in", "a.csv").read_bytes()
-    site = FakeSite()
+    site = FakeSite(users=[{"username": "jordan", "display_name": "Jordan", "players": ["Demo"]}])
     site.add(data, stored=data[:-10])
     report = sync(cfg, site)
-    assert len(report.errors) == 1 and "SHA-256 mismatch" in report.errors[0]
+    assert len(report.errors) == 2 and "SHA-256 mismatch" in report.errors[0]
+    assert "Dashboards not published" in report.errors[1] and report.published == {}
+    assert [p["dashboards"] for p in site.published] == [[]]
     result = site.published[0]["results"][0]["result"]
     assert not result["ok"] and "SHA-256" in result["error"] and result["shots_used"] == 0
     site.blobs[1] = (gzip.compress(data), "gzip")
     report = sync(cfg, site)
-    assert (report.redownloaded, report.errors) == (1, [])
+    assert (report.redownloaded, report.errors, report.published) == (1, [], {"jordan": 1})
     conn = connect(cfg.db_path)
     assert len(load_shots(conn)) == 20 and upload_raw(conn, 1) == data
     conn.execute("UPDATE uploads SET raw = ? WHERE id = 1", (b"corrupt",))
     conn.close()
     assert sync(cfg, site).redownloaded == 1
     assert upload_raw(connect(cfg.db_path), 1) == data
+
+
+def test_a_bad_download_of_a_known_upload_keeps_the_good_local_copy(tmp_path):
+    cfg = cfg_at(tmp_path)
+    data = write_export(tmp_path / "in", "a.csv").read_bytes()
+    site = FakeSite()
+    site.add(data)
+    sync(cfg, site)
+    site.uploads[0]["sha256"] = "0" * 64
+    site.blobs[1] = (gzip.compress(data[:-10]), "gzip")
+    report = sync(cfg, site)
+    assert report.redownloaded == 1 and "SHA-256 mismatch" in report.errors[0]
+    conn = connect(cfg.db_path)
+    assert upload_raw(conn, 1) == data and load_shots(conn) == []
+    [u] = list_uploads(conn)
+    assert u["error"].startswith("SHA-256 mismatch")
+
+
+def test_a_bad_download_of_a_reverted_upload_does_not_hold_back_dashboards(tmp_path):
+    cfg = cfg_at(tmp_path)
+    data = write_export(tmp_path / "in", "a.csv").read_bytes()
+    site = FakeSite(users=[{"username": "jordan", "display_name": "Jordan", "players": ["Demo"]}])
+    site.add(data, stored=data[:-10])
+    site.uploads[0]["reverted_at"] = "2026-10-03T00:00:00.000Z"
+    report = sync(cfg, site)
+    assert len(report.errors) == 1 and report.published == {"jordan": 0}
+
+
+def test_a_gzip_download_is_cut_off_past_its_declared_size(tmp_path):
+    cfg = cfg_at(tmp_path)
+    data = write_export(tmp_path / "in", "a.csv").read_bytes()
+    site = FakeSite()
+    site.add(data)
+    site.blobs[1] = (gzip.compress(data + b"0" * 5_000_000), "gzip")
+    report = sync(cfg, site)
+    assert "SHA-256 mismatch" in report.errors[0]
+    assert len(upload_raw(connect(cfg.db_path), 1)) == len(data) + 1
+
+
+def test_a_duplicate_is_not_merged_into_a_linked_copy_that_does_not_verify(tmp_path):
+    cfg = cfg_at(tmp_path)
+    src = write_export(tmp_path / "in", "a.csv")
+    site = FakeSite()
+    site.add(src.read_bytes(), stored=src.read_bytes()[:-10])
+    site.uploads[0]["reverted_at"] = "2026-10-03T00:00:00.000Z"
+    sync(cfg, site)
+    conn = connect(cfg.db_path)
+    local = ingest_file(conn, src).upload_id
+    conn.close()
+    report = sync(cfg, site)
+    assert report.merged == 0 and "does not verify" in report.errors[0]
+    conn = connect(cfg.db_path)
+    assert upload_raw(conn, local) == src.read_bytes() and len(load_shots(conn)) == 20
 
 
 def test_sync_publishes_one_dashboard_per_user_at_the_state_version(tmp_path):
@@ -318,6 +373,14 @@ def test_an_alias_puts_the_qr_login_name_on_the_typed_name_dashboard(tmp_path):
                           start=START + timedelta(days=2)).read_bytes())
     report = sync(cfg, site)
     assert report.published == {"jordan": 2}
+    players = [r["result"]["players"] for r in site.published[0]["results"]]
+    assert players == [["Jordan"], ["Jordan", "JordanBui"]]
+    src = write_export(tmp_path / "in", "c.csv", player="JordanBui", seed=3, start=START + timedelta(days=4))
+    conn = connect(cfg.db_path)
+    ingest_file(conn, src)
+    conn.close()
+    sync(cfg, site)
+    assert site.pushed[-1]["players"] == ["Jordan", "JordanBui"]
 
 
 def test_results_are_published_in_batches(tmp_path, monkeypatch):
@@ -415,6 +478,27 @@ def test_cli_site_saves_a_private_file_and_refuses_plain_http(cfg_file, monkeypa
     assert main(["--config", str(cfg_file), "site", "--url", "http://localhost:8788", "--token-stdin"]) == 0
     assert cfg.site_path.stat().st_mode & 0o777 == 0o600
     assert json.loads(cfg.site_path.read_text()) == {"url": "http://localhost:8788", "token": "t" * 40}
+
+
+def test_ingest_replace_on_a_site_upload_points_to_the_site(cfg_file, fake_site, capsys):
+    from golfstats.__main__ import main
+    from test_store_cli import write_conflicting
+    cfg = load_cfg(cfg_file)
+    first = write_export(cfg.data_dir / "src", "a.csv")
+    second = write_conflicting(cfg.data_dir / "src", "b.csv", first)
+    fake_site.add(first.read_bytes())
+    fake_site.add(second.read_bytes(), name="b.csv")
+    assert main(["--config", str(cfg_file), "sync"]) == 0
+    capsys.readouterr()
+    cfg.inbox.mkdir(parents=True, exist_ok=True)
+    queued = cfg.inbox / "b.csv"
+    queued.write_bytes(second.read_bytes())
+    assert main(["--config", str(cfg_file), "ingest", "--replace"]) == 1
+    assert "This file is upload 2 on the site" in capsys.readouterr().out
+    assert queued.exists()
+    conn = connect(cfg.db_path)
+    assert [u["replace_stored"] for u in list_uploads(conn)] == [False, False]
+    conn.close()
 
 
 def test_cli_sync_and_uploads_report(cfg_file, fake_site, capsys):

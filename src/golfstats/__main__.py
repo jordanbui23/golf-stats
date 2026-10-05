@@ -102,13 +102,19 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
                 print(f"  replaced {res.replaced} stored shot(s) with this file's values.")
             if (res.shots_added or res.replaced) and res.upload_id is not None:
                 new_uploads.add(res.upload_id)
-        if res.conflicts and not args.replace:
+        on_site = bool(res.conflicts) and res.site_id is not None and res.already_imported
+        if on_site:
+            print(f"  {len(res.conflicts)} shot(s) differ from the stored values. This file is upload {res.site_id} "
+                  "on the site, so choose which values count on the site's Uploads page, then run `bin/golf sync`. "
+                  "The file stays where it is.")
+            failed += bool(args.replace)
+        elif res.conflicts and not args.replace:
             where = "it stays in the inbox, so run `bin/golf ingest --replace`" if in_inbox(path, cfg.inbox) \
                 else f"run `bin/golf ingest --replace {path}`"
             print(f"  {len(res.conflicts)} shot(s) are already stored with different values (for example a "
                   f"normalized export). Kept the stored values. To use this file's values, {where}. "
                   f"First: {res.conflicts[0]}")
-        if in_inbox(path, cfg.inbox) and not (res.conflicts and not args.replace):
+        if in_inbox(path, cfg.inbox) and not on_site and not (res.conflicts and not args.replace):
             path.unlink()
     conn.close()
 

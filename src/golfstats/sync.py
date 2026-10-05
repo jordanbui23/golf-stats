@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import tempfile
+import zlib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -158,7 +159,15 @@ class SyncReport:
     errors: list[str] = field(default_factory=list)
 
 
-def _push(conn, client, report: SyncReport) -> None:
+def visible_names(players: list[str], aliases: dict[str, str]) -> list[str]:
+    return sorted({*players, *(aliases.get(p, p) for p in players)})
+
+
+def _has_verified_bytes(conn, upload: dict, sha256: str) -> bool:
+    return upload["error"] is None and hashlib.sha256(upload_raw(conn, upload["id"])).hexdigest() == sha256
+
+
+def _push(conn, client, cfg: Config, report: SyncReport) -> None:
     linked = {u["site_id"]: u for u in list_uploads(conn) if u["site_id"] is not None}
     for u in list_uploads(conn):
         if u["site_id"] is not None or u["error"] is not None or u["reverted_at"] is not None:
@@ -168,16 +177,17 @@ def _push(conn, client, report: SyncReport) -> None:
         result = upload_result(conn, u["id"])
         answer = client.push_upload({
             "filename": u["filename"], "sha256": u["sha256"], "size": len(raw), "encoding": "gzip",
-            "data_b64": gzip_b64(raw), "uploaded_at": utc_iso(u["uploaded_at"]), "players": result["players"],
+            "data_b64": gzip_b64(raw), "uploaded_at": utc_iso(u["uploaded_at"]),
+            "players": visible_names(result["players"], cfg.aliases),
             "shots": u["shots_in_file"], "first_shot": first, "last_shot": last,
             "replace_stored": bool(u["replace_stored"]),
         })
         site = answer["upload"]
         other = linked.get(site["id"])
         if answer.get("duplicate") and other is not None:
-            if other["sha256"] != u["sha256"]:
-                report.errors.append(f"{u['filename']}: the site matched it to upload {site['id']}, "
-                                     "which holds other bytes here. Not pushed.")
+            if other["sha256"] != u["sha256"] or not _has_verified_bytes(conn, other, u["sha256"]):
+                report.errors.append(f"{u['filename']}: the site matched it to upload {site['id']}, whose copy "
+                                     "here does not verify. Kept this copy and did not push it.")
                 continue
             delete_upload(conn, u["id"])
             report.merged += 1
@@ -189,28 +199,33 @@ def _push(conn, client, report: SyncReport) -> None:
         report.pushed += 1
 
 
-def _fetch(client, site_id: int) -> bytes:
-    data, encoding = client.download(site_id)
-    if encoding == "gzip":
-        try:
-            return gzip.decompress(data)
-        except (OSError, EOFError):
-            return data
-    return data
+def _fetch(client, site_upload: dict) -> bytes:
+    data, encoding = client.download(site_upload["id"])
+    if encoding != "gzip":
+        return data
+    unzip = zlib.decompressobj(wbits=31)
+    try:
+        return unzip.decompress(data, int(site_upload["size"]) + 1)
+    except zlib.error:
+        return data
 
 
-def _mirror(conn, client, site_uploads: list[dict], report: SyncReport) -> dict[int, int]:
+def _mirror(conn, client, site_uploads: list[dict], report: SyncReport) -> tuple[dict[int, int], list[dict]]:
     local = {u["site_id"]: u for u in list_uploads(conn) if u["site_id"] is not None}
     ids: dict[int, int] = {}
+    unverified: list[dict] = []
     for s in site_uploads:
         known = local.get(s["id"])
         fresh = known is None or known["sha256"] != s["sha256"] or \
             hashlib.sha256(upload_raw(conn, known["id"])).hexdigest() != s["sha256"]
         if fresh:
-            ids[s["id"]] = mirror_upload(conn, _fetch(client, s["id"]), site_id=s["id"], filename=s["filename"],
+            data = _fetch(client, s)
+            ids[s["id"]] = mirror_upload(conn, data, site_id=s["id"], filename=s["filename"],
                                          uploaded_by=s["uploaded_by"], uploaded_at=s["uploaded_at"],
                                          replace=bool(s["replace_stored"]), reverted_at=s.get("reverted_at"),
                                          sha256=s["sha256"])
+            if hashlib.sha256(data).hexdigest() != s["sha256"] and s.get("reverted_at") is None:
+                unverified.append(s)
             report.pulled += known is None
             report.redownloaded += known is not None
             continue
@@ -219,7 +234,7 @@ def _mirror(conn, client, site_uploads: list[dict], report: SyncReport) -> dict[
             set_replace(conn, known["id"], bool(s["replace_stored"]))
             set_reverted(conn, known["id"], s.get("reverted_at"))
             report.state_changes += 1
-    return ids
+    return ids, unverified
 
 
 def build_dashboard(shots: list[dict], user: dict, cfg: Config) -> dict:
@@ -235,19 +250,25 @@ def sync(cfg: Config, client: SiteClient) -> SyncReport:
     report = SyncReport()
     conn = connect(cfg.db_path)
     try:
-        _push(conn, client, report)
+        _push(conn, client, cfg, report)
         state = client.state()
         report.ledger_version = state["ledger_version"]
-        ids = _mirror(conn, client, state["uploads"], report)
+        ids, unverified = _mirror(conn, client, state["uploads"], report)
         results = []
         for s in state["uploads"]:
             result = upload_result(conn, ids[s["id"]])
+            result["players"] = visible_names(result["players"], cfg.aliases)
             results.append({"id": s["id"], "result": result})
             if not result["ok"]:
                 report.errors.append(f"{s['filename']} (site upload {s['id']}): {result['error']}")
         for i in range(0, len(results), RESULTS_PER_PUBLISH):
             client.publish({"ledger_version": report.ledger_version,
                             "results": results[i:i + RESULTS_PER_PUBLISH], "dashboards": []})
+        if unverified:
+            report.errors.append(f"Dashboards not published: {len(unverified)} active upload(s) did not download intact, "
+                                 f"first {unverified[0]['filename']} (site upload {unverified[0]['id']}). Sync again, "
+                                 "or revert it on the site.")
+            return report
         shots, _ = merge_aliases(load_shots(conn), cfg.aliases)
         for user in state["users"]:
             board = build_dashboard(shots, user, cfg)

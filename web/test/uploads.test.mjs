@@ -232,11 +232,28 @@ test("a stored body above 1 MB round-trips byte for byte through both raw routes
   assert.deepEqual(new Uint8Array(await box.arrayBuffer()), bytes);
 });
 
-test("gzip storage is passed through with Content-Encoding on the user route and raw on the box route", async () => {
+test("a browser upload must be uncompressed and match its sha256", async () => {
+  const { site, jordan, christian } = await twoUsers();
+  const original = fixture("jordan.csv");
+  const zipped = await site.upload(jordan, await gzip(original), { encoding: "gzip", original });
+  assert.equal(zipped.status, 400);
+  assert.match((await zipped.json()).error, /uncompressed/);
+  const junk = fixture("christian.csv");
+  const claimed = await site.upload(christian, junk, { sha256: await sha256Hex(original), players: ["Jordan"] });
+  assert.equal(claimed.status, 400);
+  assert.match((await claimed.json()).error, /sha256/);
+  assert.equal(site.ledgerVersion(), 0);
+  assert.equal((await site.upload(jordan, original, { players: ["Jordan"] })).status, 201);
+});
+
+test("box gzip storage is passed through with Content-Encoding on the user route and raw on the box route", async () => {
   const { site, jordan } = await twoUsers();
   const original = fixture("jordan.csv");
   const stored = await gzip(original);
-  const res = await site.upload(jordan, stored, { encoding: "gzip", original, filename: "jordan.csv" });
+  const res = await site.sync("POST", "/api/sync/uploads", {
+    filename: "jordan.csv", sha256: await sha256Hex(original), size: original.byteLength, encoding: "gzip",
+    data_b64: Buffer.from(stored).toString("base64"), uploaded_at: "2026-10-01T19:00:00Z", players: ["Jordan"], shots: 20,
+  });
   assert.equal(res.status, 201);
   const id = (await res.json()).upload.id;
   const inline = await site.request("GET", `/api/uploads/${id}/raw?inline=1`, { cookie: jordan });
@@ -248,6 +265,39 @@ test("gzip storage is passed through with Content-Encoding on the user route and
   assert.equal(box.headers.get("X-Encoding"), "gzip");
   assert.equal(box.headers.get("Content-Encoding"), null);
   assert.deepEqual(new Uint8Array(await box.arrayBuffer()), stored);
+});
+
+test("a new user with a deleted user's name cannot see the old user's uploads", async () => {
+  const { site, jordan } = await twoUsers();
+  const id = (await (await site.upload(jordan, fixture("jordan.csv"), { players: ["Somebody"] })).json()).upload.id;
+  assert.equal((await site.request("GET", `/api/uploads/${id}/raw`, { cookie: jordan })).status, 200);
+  assert.equal((await site.sync("DELETE", "/api/sync/users/jordan")).status, 204);
+  await site.addUser("jordan", "another pass phrase", ["Jordan"]);
+  const again = await site.session("jordan", "another pass phrase");
+  assert.deepEqual((await (await site.request("GET", "/api/uploads", { cookie: again })).json()).uploads, []);
+  assert.equal((await site.request("GET", `/api/uploads/${id}/raw`, { cookie: again })).status, 404);
+  assert.equal((await site.request("POST", `/api/uploads/${id}/revert`, { cookie: again })).status, 404);
+  assert.equal(row(site, id).uploaded_by, "jordan");
+});
+
+test("player names match without regard to case, beyond ASCII too", async () => {
+  const { site, christian } = await twoUsers();
+  await site.addUser("jorg", PW, ["jörg"]);
+  const jorg = await site.session("jorg", PW);
+  await site.upload(christian, fixture("christian.csv"), { players: ["JÖRG"] });
+  assert.equal((await (await site.request("GET", "/api/uploads", { cookie: jorg })).json()).uploads.length, 1);
+});
+
+test("the uploads list stops at 500 rows", async () => {
+  const { site, jordan } = await twoUsers();
+  const insert = site.db.prepare(
+    `INSERT INTO uploads (uid, sha256, filename, size, encoding, uploaded_at, uploaded_by, uploaded_by_id, changed_version)
+     VALUES (?, ?, 'x.csv', 1, 'identity', '2026-10-01T00:00:00.000Z', 'jordan', 1, 1)`,
+  );
+  for (let i = 0; i < 501; i++) insert.run(`u${i}`, String(i).padStart(64, "0"));
+  const body = await (await site.request("GET", "/api/uploads", { cookie: jordan })).json();
+  assert.equal(body.uploads.length, 500);
+  assert.equal(body.uploads[0].id, 501);
 });
 
 test("a filename with non-ASCII characters is quoted safely in Content-Disposition", async () => {

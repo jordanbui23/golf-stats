@@ -1,6 +1,6 @@
 import { bad, empty, json, notFound, nowIso, readJson } from "./http.js";
 import { decodeBase64, isHex64, randomHex } from "./crypto.js";
-import { insertUploadStatements, ledgerVersion, parsePlayers, storedBytes, syncItem, uploadById, uploadByUid, UPLOAD_COLUMNS } from "./db.js";
+import { insertUploadStatements, ledgerVersion, parsePlayers, playerRowsStatement, storedBytes, syncItem, uploadById, uploadByUid, UPLOAD_COLUMNS } from "./db.js";
 import {
   LIMITS,
   encodingField,
@@ -86,7 +86,7 @@ export async function syncPush(request, env) {
     bytes: storedBytesField(bytes, encoding, size),
     uploaded_at: uploadedAtField(body.uploaded_at),
     uploaded_by: "box",
-    players: body.players === undefined || body.players === null ? [] : playersField(body.players),
+    players: body.players === undefined || body.players === null ? [] : playersField(body.players, "players", LIMITS.boxPlayers),
     shots: shotsField(body.shots),
     first_shot: shotTimeField(body.first_shot, "first_shot"),
     last_shot: shotTimeField(body.last_shot, "last_shot"),
@@ -99,23 +99,33 @@ export async function syncPush(request, env) {
   return json({ upload: newest ? syncItem(newest) : null, duplicate: true }, 200);
 }
 
-function resultStatement(db, item) {
+function resultStatement(db, item, version) {
   if (item === null || typeof item !== "object" || !Number.isSafeInteger(item.id)) throw bad("Each result needs a numeric id.");
   const result = item.result;
   if (result === null || typeof result !== "object" || Array.isArray(result)) throw bad("Each result needs a result object.");
   const text = JSON.stringify(result);
   if (text.length > RESULT_MAX) throw bad("A result is too large.");
-  const sets = ["result = ?"];
-  const params = [text];
+  const guard = "(u.result_version IS NULL OR u.result_version <= ?)";
+  const statements = [];
+  const sets = ["result = ?", "result_version = ?"];
+  const params = [text, version];
   if (result.players !== undefined) {
+    const players = playersField(result.players, "result.players", LIMITS.boxPlayers);
     sets.push("players = ?");
-    params.push(JSON.stringify(playersField(result.players, "result.players")));
+    params.push(JSON.stringify(players));
+    statements.push(
+      db
+        .prepare(`DELETE FROM upload_players WHERE upload_id = ? AND EXISTS (SELECT 1 FROM uploads u WHERE u.id = ? AND ${guard})`)
+        .bind(item.id, item.id, version),
+      playerRowsStatement(db, players, `u.id = ? AND ${guard}`, item.id, version),
+    );
   }
   if (result.shots_in_file !== undefined) {
     sets.push("shots = ?");
     params.push(shotsField(result.shots_in_file));
   }
-  return db.prepare(`UPDATE uploads SET ${sets.join(", ")} WHERE id = ?`).bind(...params, item.id);
+  statements.push(db.prepare(`UPDATE uploads AS u SET ${sets.join(", ")} WHERE u.id = ? AND ${guard}`).bind(...params, item.id, version));
+  return statements;
 }
 
 function dashboardStatement(db, item, version, publishedAt) {
@@ -155,7 +165,7 @@ export async function syncPublish(request, env) {
   if (!Array.isArray(dashboards)) throw bad("dashboards must be a list.");
   if (version > (await ledgerVersion(db))) throw bad("ledger_version is newer than the site's.");
   const publishedAt = nowIso();
-  const resultStatements = results.map((item) => resultStatement(db, item));
+  const resultStatements = results.flatMap((item) => resultStatement(db, item, version));
   const dashboardStatements = dashboards.map((item) => dashboardStatement(db, item, version, publishedAt));
   if (resultStatements.length + dashboardStatements.length === 0) return json({ published: 0 });
   const out = await db.batch([...resultStatements, ...dashboardStatements]);

@@ -66,21 +66,35 @@ test("the dev server applies migrations once, keeps data across restarts and pas
   const cookie = login.headers.getSetCookie()[0].split(";")[0];
 
   const original = fixture("jordan.csv");
-  const stored = await gzip(original);
   const form = new FormData();
-  form.set("file", new Blob([stored]), "jordan.csv");
-  form.set("encoding", "gzip");
+  form.set("file", new Blob([original]), "jordan.csv");
+  form.set("encoding", "identity");
   form.set("sha256", await sha256Hex(original));
   form.set("size", String(original.byteLength));
   form.set("filename", "jordan.csv");
   form.set("players", JSON.stringify(["Jordan"]));
   const up = await fetch(`${base}/api/uploads`, { method: "POST", headers: { Origin: base, Cookie: cookie }, body: form });
   assert.equal(up.status, 201);
-  const id = (await up.json()).upload.id;
-
-  const raw = await fetch(`${base}/api/uploads/${id}/raw?inline=1`, { headers: { Cookie: cookie } });
-  assert.equal(raw.headers.get("Content-Encoding"), "gzip");
+  const mine = (await up.json()).upload.id;
+  const raw = await fetch(`${base}/api/uploads/${mine}/raw?inline=1`, { headers: { Cookie: cookie } });
+  assert.equal(raw.headers.get("Content-Encoding"), null);
   assert.deepEqual(new Uint8Array(await raw.arrayBuffer()), original);
+
+  const other = fixture("christian.csv");
+  const stored = await gzip(other);
+  const push = await fetch(`${base}/api/sync/uploads`, {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({
+      filename: "c.csv", sha256: await sha256Hex(other), size: other.byteLength, encoding: "gzip",
+      data_b64: Buffer.from(stored).toString("base64"), uploaded_at: "2026-10-02T19:00:00Z", players: ["Jordan"], shots: 14,
+    }),
+  });
+  assert.equal(push.status, 201);
+  const id = (await push.json()).upload.id;
+  const zipped = await fetch(`${base}/api/uploads/${id}/raw?inline=1`, { headers: { Cookie: cookie } });
+  assert.equal(zipped.headers.get("Content-Encoding"), "gzip");
+  assert.deepEqual(new Uint8Array(await zipped.arrayBuffer()), other);
   const box = await fetch(`${base}/api/sync/uploads/${id}/raw`, { headers: auth });
   assert.equal(box.headers.get("X-Encoding"), "gzip");
   assert.deepEqual(new Uint8Array(await box.arrayBuffer()), stored);
