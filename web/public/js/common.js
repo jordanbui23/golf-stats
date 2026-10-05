@@ -87,7 +87,7 @@ export async function loadMe() {
   return res.json();
 }
 
-export function header(me, links) {
+export function header(me, links, tabs = null) {
   const signOut = el("button", {
     type: "button",
     className: "link",
@@ -104,6 +104,7 @@ export function header(me, links) {
     { className: "top" },
     el("a", { href: "/", className: "brand" }, "Golf ", el("span", { text: "stats" })),
     el("span", { className: "who", text: me.display_name }),
+    tabs,
     el("nav", {}, ...links, signOut),
   );
 }

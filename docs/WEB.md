@@ -245,14 +245,17 @@ parser warnings.
 
 - `/login`: username, password, and "Keep me signed in on this device", unchecked. On a
   shared sim PC, leave it unchecked and sign out when done.
-- `/`: header with the user's name, an Upload button (several files at once), Uploads, Sign
-  out. Below it, the analysis time and the pending uploads, each with Show shots and Undo.
-  Undo reverts an active upload and restores a reverted one.
-  Then the insights: the newest one in full, with the time it was made, its session, its
+- `/`: header with the user's name, a Dashboard and Insights tab bar, an Upload button
+  (several files at once), Uploads, Sign out. The tab bar shows only when the user has
+  insights, and `#insights` in the URL opens that tab. An upload switches to Dashboard.
+  The Dashboard tab holds the analysis time and the pending uploads, each with Show shots and
+  Undo. Undo reverts an active upload and restores a reverted one. Then the dashboard iframe.
+  With no analysis yet, a sentence says the uploads are saved and the stats appear after the
+  next analysis run.
+  The Insights tab holds the newest insight in full, with the time it was made, its session, its
   "Before you hit" line when it has one, and each drill's name, setup, reps and pass rule, and
-  the earlier ones folded under "Earlier insights". Nothing shows when there are none, or
-  when `/api/insights` fails. Then the dashboard iframe. With no analysis yet, a sentence says the uploads are saved and
-  the stats appear after the next analysis run.
+  the earlier ones folded under "Earlier insights". With no insights, or when `/api/insights`
+  fails, there is no tab bar and the page shows the Dashboard tab.
 - `/uploads`: every visible upload with time, file, uploader, players, shots, state, the box's
   result, a toggle between keeping stored values and using this file's values when the result
   has conflicts, Revert or Restore, and Download.

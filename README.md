@@ -177,8 +177,8 @@ Each item has a title, the evidence, a drill and a target for the next session. 
 named practice drill with a physical setup or instant feedback, such as a tee gate on the start
 line or foot spray on the face, with its reps and the result that says you can move on. A setup
 fix such as turning OERT on goes in a "Before you hit" line, not in an item.
-The site shows the newest insights above the dashboard with the time they were made, and
-keeps the earlier ones below. Without `--user` it runs for every site user. A session that
+The site shows them on an Insights tab next to the dashboard, newest first, with the time they
+were made. Without `--user` it runs for every site user. A session that
 already has insights is skipped, and `--again` asks for new ones. Without a site, it prints
 them and stores them in `data/golf.db`.
 

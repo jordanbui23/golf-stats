@@ -83,7 +83,7 @@ function insightCard(insight, open) {
 function insightsSection(insights) {
   if (!insights.length) return [];
   const [latest, ...earlier] = insights;
-  const parts = [el("h2", { text: "Insights" }), insightCard(latest, true)];
+  const parts = [insightCard(latest, true)];
   if (earlier.length) parts.push(el("h2", { text: "Earlier insights" }), el("div", { className: "earlier" }, earlier.map((i) => insightCard(i, false))));
   return parts;
 }
@@ -99,6 +99,62 @@ function fitFrame(frame, top) {
   window.addEventListener("resize", fitted);
 }
 
+const TABS = [["dashboard", "Dashboard"], ["insights", "Insights"]];
+
+function tabFromHash() {
+  return location.hash === "#insights" ? "insights" : "dashboard";
+}
+
+function tabView(panels) {
+  let wanted = tabFromHash();
+  let available = false;
+  const buttons = {};
+  const bar = el("div", { className: "tabs", role: "tablist", "aria-label": "View", hidden: true });
+  const current = () => (available ? wanted : "dashboard");
+  const show = () => {
+    bar.hidden = !available;
+    for (const [name] of TABS) {
+      const on = name === current();
+      buttons[name].setAttribute("aria-selected", String(on));
+      buttons[name].tabIndex = on ? 0 : -1;
+      panels[name].hidden = !on;
+    }
+    if (fitted) fitted();
+  };
+  const select = (name) => {
+    wanted = name;
+    history.replaceState(null, "", name === "insights" ? "#insights" : location.pathname + location.search);
+    show();
+  };
+  for (const [name, label] of TABS) {
+    panels[name].id = `panel-${name}`;
+    panels[name].setAttribute("role", "tabpanel");
+    panels[name].setAttribute("aria-labelledby", `tab-${name}`);
+    buttons[name] = el("button", { type: "button", role: "tab", id: `tab-${name}`, "aria-controls": `panel-${name}`, text: label, onClick: () => select(name) });
+    bar.append(buttons[name]);
+  }
+  bar.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const next = current() === "dashboard" ? "insights" : "dashboard";
+    select(next);
+    buttons[next].focus();
+  });
+  window.addEventListener("hashchange", () => {
+    wanted = tabFromHash();
+    show();
+  });
+  show();
+  return {
+    bar,
+    select,
+    setAvailable(value) {
+      available = value;
+      show();
+    },
+  };
+}
+
 async function start() {
   const me = await loadMe();
   if (!me) return;
@@ -107,10 +163,15 @@ async function start() {
   const summary = el("section", { className: "summary" });
   const insightsSlot = el("section", { className: "insights" });
   const frameSlot = el("section", { className: "frame-slot" });
+  const panels = {
+    dashboard: el("div", {}, el("main", {}, status, summary), frameSlot),
+    insights: el("main", {}, insightsSlot),
+  };
+  const tabs = tabView(panels);
   const picker = el("input", { type: "file", accept: ".csv,text/csv", multiple: true, className: "hidden" });
   const uploadButton = el("button", { type: "button", className: "primary", text: "Upload", onClick: () => picker.click() });
-  const top = header(me, [uploadButton, el("a", { href: "/uploads", text: "Uploads" })]);
-  app.replaceChildren(top, el("main", {}, status, summary, insightsSlot), frameSlot, picker);
+  const top = header(me, [uploadButton, el("a", { href: "/uploads", text: "Uploads" })], tabs.bar);
+  app.replaceChildren(top, panels.dashboard, panels.insights, picker);
 
   let frameFor = null;
   const refresh = async () => {
@@ -123,6 +184,7 @@ async function start() {
       return;
     }
     insightsSlot.replaceChildren(...insightsSection(insights.insights));
+    tabs.setAvailable(insights.insights.length > 0);
     const parts = [];
     if (data.analysis) {
       parts.push(el("p", { className: "meta", text: `Analysis from ${fmtTime(data.analysis.published_at)}.` }));
@@ -152,6 +214,7 @@ async function start() {
     const files = Array.from(picker.files || []);
     picker.value = "";
     if (!files.length) return;
+    tabs.select("dashboard");
     uploadButton.disabled = true;
     try {
       await uploadFiles(files, me, status, refresh);
