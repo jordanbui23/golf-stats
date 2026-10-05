@@ -59,8 +59,17 @@
   table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 12.5px; }
   th, td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
   th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--card); }
-  #shots th:nth-child(-n+4), #shots td:nth-child(-n+4), #bag th:first-child, #bag td:first-child { text-align: left; }
+  #shots th:nth-child(-n+4), #shots td:nth-child(-n+4), table.bag th:first-child, table.bag td:first-child,
+  #ovClubs th:first-child, #ovClubs td:first-child, #sessions th, #sessions td { text-align: left; }
+  #sessions td:nth-child(2), #sessions th:nth-child(2) { text-align: right; }
   tr.out td { color: #5b6f67; text-decoration: line-through; }
+  tr.link { cursor: pointer; }
+  tr.link:hover td, tr.link:focus td { background: var(--grid); }
+  tr.link:focus { outline: none; }
+  tr.on td { color: var(--text); background: var(--accent-dim); }
+  .good { color: var(--accent); }
+  .kpi .v.date { font-size: 17px; }
+  [hidden] { display: none !important; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
   .trendbar { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
   @media (max-width: 640px) { .focus { grid-template-columns: 1fr; } header { padding: 10px 14px; } main { padding: 14px; } }
@@ -70,10 +79,43 @@
 <header>
   <h1>Golf <span>stats</span></h1>
   <div class="who" id="who"></div>
+  <button class="chip" id="home" type="button">Overview</button>
   <select id="session" aria-label="Session"></select>
   <div class="chips" id="clubs"></div>
 </header>
 <main id="app">
+<div id="overview" hidden>
+  <section class="card focus" id="ovFocus"></section>
+  <section class="kpis" id="ovKpis"></section>
+  <div class="grid">
+    <section class="card span2">
+      <h2>Practice</h2>
+      <p class="sub">Counted shots per session, by club. Click a bar to open that session.</p>
+      <svg id="volume"></svg>
+    </section>
+    <section class="card">
+      <h2>Bag</h2>
+      <p class="sub">Median carry per club over every session, solid strikes only where strike is rated. Gap is to the next shorter club.</p>
+      <div class="tablewrap"><table id="ovBag" class="bag"></table></div>
+    </section>
+    <section class="card span2">
+      <h2>Trend</h2>
+      <div class="trendbar"><select id="ovTrendMetric" aria-label="Trend metric"></select><span class="sub" id="ovTrendNote" style="margin:0"></span></div>
+      <svg id="ovTrend"></svg>
+    </section>
+    <section class="card">
+      <h2>Clubs</h2>
+      <p class="sub">Counted shots with each club over every session. Click a club to show it on the charts.</p>
+      <div class="tablewrap"><table id="ovClubs"></table></div>
+    </section>
+    <section class="card wide">
+      <h2>Sessions</h2>
+      <p class="sub">Newest first. Last plan grades the plan set by the session before, against its share in window when it was set. Click a row to open the session.</p>
+      <div class="tablewrap"><table id="sessions"></table></div>
+    </section>
+  </div>
+</div>
+<div id="sessionView" hidden>
   <section class="card focus" id="focus"></section>
   <section class="kpis" id="kpis"></section>
   <div class="grid">
@@ -103,7 +145,7 @@
     <section class="card">
       <h2>Bag</h2>
       <p class="sub">Median carry per club over every session so far, solid strikes only where strike is rated. Gap is to the next shorter club.</p>
-      <div class="tablewrap"><table id="bag"></table></div>
+      <div class="tablewrap"><table id="bag" class="bag"></table></div>
     </section>
     <section class="card">
       <h2>Why the ball missed sideways</h2>
@@ -120,6 +162,7 @@
       <div class="tablewrap"><table id="shots"></table></div>
     </section>
   </div>
+</div>
 </main>
 <script>const DATA = /*__DATA__*/null;</script>
 <script>
@@ -130,7 +173,9 @@
   const S = DATA ? DATA.sessions : [];
   const C = DATA ? Object.fromEntries(DATA.shot_columns.map((c, i) => [c, i])) : {};
   const LBL = DATA ? DATA.labels : {};
-  const state = { session: S.length - 1, club: null };
+  const OV = DATA ? DATA.overview : null;
+  const MINE = OV ? OV.session_indexes : [];
+  const state = { session: null, club: null, trend: null };
 
   const allClubs = [...new Set((DATA ? DATA.shots : []).map((r) => r[C.club]))];
   const clubOrder = (code) => {
@@ -212,9 +257,24 @@
   function renderSessionSelect() {
     const sel = $("session");
     sel.innerHTML = "";
-    S.forEach((s, i) => { const o = document.createElement("option"); o.value = i; o.textContent = `${s.label} · ${s.counted} shots`; sel.appendChild(o); });
-    sel.value = state.session;
-    sel.onchange = () => { state.session = +sel.value; state.club = null; render(); };
+    const add = (value, text) => { const o = document.createElement("option"); o.value = value; o.textContent = text; sel.appendChild(o); };
+    add("overview", "All sessions");
+    for (let i = S.length - 1; i >= 0; i--) add(i, `${S[i].label} · ${S[i].counted} shots`);
+    sel.onchange = () => sel.value === "overview" ? showOverview() : openSession(+sel.value, false);
+  }
+
+  function openSession(i, keepClub) {
+    const fromOverview = state.session == null;
+    state.session = i;
+    if (!keepClub) state.club = null;
+    render();
+    if (fromOverview) window.scrollTo(0, 0);
+  }
+
+  function showOverview() {
+    state.session = null;
+    render();
+    window.scrollTo(0, 0);
   }
 
   function defaultClub(sess) {
@@ -222,13 +282,20 @@
     return Object.entries(sess.clubs).sort((a, b) => b[1].n - a[1].n)[0][0];
   }
 
-  function renderChips(sess) {
+  function overviewClub() {
+    const latest = S[S.length - 1];
+    if (latest.focus) return latest.focus.club;
+    const top = [...OV.clubs].sort((a, b) => b.shots - a.shots)[0];
+    return top ? top.club : null;
+  }
+
+  function renderChips(entries) {
     const box = $("clubs");
     box.innerHTML = "";
-    for (const [code, c] of Object.entries(sess.clubs)) {
+    for (const [code, n] of entries) {
       const b = document.createElement("button");
       b.className = "chip" + (code === state.club ? " on" : "");
-      b.innerHTML = `<span class="dot" style="background:${colorOf(code)}"></span>${esc(code)} <span style="opacity:.6">${c.n}</span>`;
+      b.innerHTML = `<span class="dot" style="background:${colorOf(code)}"></span>${esc(code)} <span style="opacity:.6">${n}</span>`;
       b.onclick = () => { state.club = code; render(); };
       box.appendChild(b);
     }
@@ -239,24 +306,26 @@
     return hi >= 200 ? `at least ${fmt(lo, Math.abs(lo) < 10 ? 3 : 0)}${u}` : `between ${fmt(lo, 0, true)}${u} and ${fmt(hi, 0, true)}${u}`;
   }
 
-  function renderFocus(sess) {
-    const box = $("focus");
-    const f = sess.focus;
+  const pctOf = (hits, n) => Math.round(100 * hits / n);
+
+  function renderFocus(sess, boxId, latest) {
+    const box = $(boxId);
+    const f = sess.focus, when = latest ? "last session" : "this session";
+    const title = `Next session focus${latest ? ` <span style="text-transform:none;letter-spacing:0">· from ${esc(sess.label)}</span>` : ""}`;
     let html = "";
     if (f) {
-      const t = f.today, pct = t.n ? Math.round(100 * t.hits / t.n) : 0;
-      html += `<div><h2>Next session focus</h2><div class="headline">${esc(f.club)}: ${esc(f.label.toLowerCase())} ${windowText(f)}</div><p class="reason">${esc(f.reason)}</p></div>`;
-      html += `<div class="side"><div class="sub" style="margin:0">In window this session</div><div class="headline" style="margin:2px 0 0">${t.hits} <span style="color:var(--muted);font-size:14px">of ${t.n} (${pct}%)</span></div><div class="meter"><div style="width:${pct}%"></div></div><div class="sub" style="margin:0">median ${fmt(t.median, 1, true)}${unitText(f.unit)}, spread ±${fmt(t.sd)}</div></div>`;
+      const t = f.today, pct = t.n ? pctOf(t.hits, t.n) : 0;
+      html += `<div><h2>${title}</h2><div class="headline">${esc(f.club)}: ${esc(f.label.toLowerCase())} ${windowText(f)}</div><p class="reason">${esc(f.reason)}</p></div>`;
+      html += `<div class="side"><div class="sub" style="margin:0">In window ${when}</div><div class="headline" style="margin:2px 0 0">${t.hits} <span style="color:var(--muted);font-size:14px">of ${t.n} (${pct}%)</span></div><div class="meter"><div style="width:${pct}%"></div></div><div class="sub" style="margin:0">median ${fmt(t.median, 1, true)}${unitText(f.unit)}, spread ±${fmt(t.sd)}</div></div>`;
     } else {
-      html += `<div><h2>Next session focus</h2><div class="headline">Not enough shots yet</div><p class="reason">Hit at least ${DATA.min_shots} counted shots with one club so the checks have data.</p></div>`;
+      html += `<div><h2>${title}</h2><div class="headline">Not enough shots yet</div><p class="reason">Hit at least ${DATA.min_shots} counted shots with one club so the checks have data.</p></div>`;
     }
     if (sess.grades && sess.grades.length) {
       html += `<div class="grade" style="grid-column:1/-1">` + sess.grades.map((g) => {
         const what = `${esc(g.club)} ${esc(g.label.toLowerCase())}`;
-        if (!g.n) return `<b>Last plan</b>: ${what} · not graded, no ${esc(g.club)} shots with that number this session.`;
-        const pct = Math.round(100 * g.hits / g.n);
-        const base = g.baseline.n ? `${g.baseline.hits} of ${g.baseline.n} (${Math.round(100 * g.baseline.hits / g.baseline.n)}%)` : "–";
-        return `<b>Last plan</b>: ${what} ${windowText(g)} · <b>${g.hits} of ${g.n} (${pct}%)</b> this session, ${base} when it was set.`;
+        if (!g.n) return `<b>Last plan</b>: ${what} · not graded, no ${esc(g.club)} shots with that number ${when}.`;
+        const base = g.baseline.n ? `${g.baseline.hits} of ${g.baseline.n} (${pctOf(g.baseline.hits, g.baseline.n)}%)` : "–";
+        return `<b>Last plan</b>: ${what} ${windowText(g)} · <b>${g.hits} of ${g.n} (${pctOf(g.hits, g.n)}%)</b> ${when}, ${base} when it was set.`;
       }).join("<br>") + `</div>`;
     }
     box.innerHTML = html;
@@ -378,15 +447,15 @@
     }).join("");
   }
 
-  function renderBag(sess) {
-    const rows = sess.bag || [];
-    if (!rows.length) { $("bag").innerHTML = `<tr><td class="empty">No carry data yet.</td></tr>`; return; }
-    $("bag").innerHTML = `<tr><th>Club</th><th>Carry</th><th>Spread</th><th>Gap</th><th>Shots</th></tr>` + rows.map((r) =>
+  function renderBag(sess, tableId) {
+    const rows = sess.bag || [], table = $(tableId);
+    if (!rows.length) { table.innerHTML = `<tr><td class="empty">No carry data yet.</td></tr>`; return; }
+    table.innerHTML = `<tr><th>Club</th><th>Carry</th><th>Spread</th><th>Gap</th><th>Shots</th></tr>` + rows.map((r) =>
       `<tr><td><b style="color:${colorOf(r.club)}">${esc(r.club)}</b></td><td>${fmt(r.carry, 0)}</td><td>${r.sd == null ? "–" : "±" + fmt(r.sd, 0)}</td><td>${r.gap == null ? "–" : fmt(r.gap, 0)}</td><td>${r.n}${r.solid_only ? "" : " (all)"}</td></tr>`).join("");
   }
 
-  function renderTrend() {
-    const sel = $("trendMetric");
+  function renderTrend(selId, svgId, noteId, sessIdx) {
+    const sel = $(selId);
     if (!sel.options.length) {
       for (const [key, stat] of DATA.trend_metrics) {
         const o = document.createElement("option");
@@ -394,28 +463,119 @@
         o.textContent = `${LBL[key].label} ${stat === "sd" ? "spread" : "median"}`;
         sel.appendChild(o);
       }
-      const last = S[S.length - 1].focus, want = last ? `${last.metric}|median` : "";
-      sel.value = [...sel.options].some((o) => o.value === want) ? want : "face_to_path|median";
-      sel.onchange = renderTrend;
+      sel.onchange = () => { state.trend = sel.value; render(); };
     }
-    const [key, stat] = sel.value.split("|");
-    const player = S[state.session].player;
-    const pts = S.map((s, i) => ({ i, s, m: s.player === player && s.clubs[state.club] ? s.clubs[state.club].metrics[key] : null }))
+    if (state.trend == null) {
+      const last = S[S.length - 1].focus, want = last ? `${last.metric}|median` : "";
+      state.trend = [...sel.options].some((o) => o.value === want) ? want : "face_to_path|median";
+    }
+    sel.value = state.trend;
+    const [key, stat] = state.trend.split("|");
+    const player = S[sessIdx == null ? S.length - 1 : sessIdx].player, club = state.club;
+    const pts = S.map((s, i) => ({ i, s, m: club && s.player === player && s.clubs[club] ? s.clubs[club].metrics[key] : null }))
       .filter((p) => p.m && p.m[stat] != null);
-    $("trendNote").textContent = `${state.club}, ${pts.length} session(s)`;
+    $(noteId).textContent = club ? `${club}, ${pts.length} session(s)` : "No counted shots yet";
     const ys = pts.map((p) => p.m[stat]);
-    const f = frame($("trend"), { x: [-0.5, Math.max(pts.length - 0.5, 0.5)], y: extent(ys, .2, stat === "sd" ? 2 : 4), h: 250, w: 640, hideX: true, yLabel: `${LBL[key].label} (${LBL[key].unit === "deg" ? "°" : LBL[key].unit})` });
+    const f = frame($(svgId), { x: [-0.5, Math.max(pts.length - 0.5, 0.5)], y: extent(ys, .2, stat === "sd" ? 2 : 4), h: 250, w: 640, hideX: true, yLabel: `${LBL[key].label} (${LBL[key].unit === "deg" ? "°" : LBL[key].unit})` });
     pts.forEach((p, j) => txt(f.top, f.sx(j), f.H - f.P.b + 15, p.s.start.slice(5, 10), { "text-anchor": "middle" }));
     if (key in DATA.windows && stat === "median") {
       const [lo, hi] = DATA.windows[key];
       el("rect", { x: 0, width: f.W, y: f.sy(hi), height: f.sy(lo) - f.sy(hi), fill: "rgba(52,211,153,.10)" }, f.g);
     }
-    if (pts.length > 1) el("polyline", { points: pts.map((p, j) => `${f.sx(j)},${f.sy(p.m[stat])}`).join(" "), fill: "none", stroke: colorOf(state.club), "stroke-width": 2 }, f.g);
+    if (pts.length > 1) el("polyline", { points: pts.map((p, j) => `${f.sx(j)},${f.sy(p.m[stat])}`).join(" "), fill: "none", stroke: colorOf(club), "stroke-width": 2 }, f.g);
     pts.forEach((p, j) => {
-      const c = dot(f.g, f.sx(j), f.sy(p.m[stat]), p.i === state.session ? "#e4eee8" : colorOf(state.club), p.i === state.session ? 6 : 4.5, `${p.s.label}: ${fmt(p.m[stat], 1)}`);
+      const c = dot(f.g, f.sx(j), f.sy(p.m[stat]), p.i === sessIdx ? "#e4eee8" : colorOf(club), p.i === sessIdx ? 6 : 4.5, `${p.s.label}: ${fmt(p.m[stat], 1)}`);
       c.style.cursor = "pointer";
-      c.onclick = () => { state.session = p.i; $("session").value = p.i; render(); };
+      c.onclick = () => openSession(p.i, true);
     });
+  }
+
+  const shortDate = (s) => { const [, mon, day, year] = s.label.split(/[ ,]+/); return `${esc(mon)} ${esc(day)}<small>${esc(year)}</small>`; };
+
+  function renderOverviewKpis() {
+    const first = S[MINE[0]], latest = S[S.length - 1];
+    const tiles = [
+      ["Sessions", OV.sessions, "", ""],
+      ["Shots", OV.counted, OV.no_reads ? `${OV.no_reads} misread${OV.no_reads === 1 ? "" : "s"} left out` : "counted", ""],
+      ["Clubs", OV.clubs.length, "", ""],
+      ["First session", shortDate(first), "", "date"],
+      ["Latest session", shortDate(latest), `${latest.counted} shots`, "date"],
+      ["Plans above baseline", OV.plans_graded ? `${OV.plans_above_baseline}<small>of ${OV.plans_graded}</small>` : "–",
+        OV.plans_graded ? "in window more often than when set" : MINE.length < 2 ? "needs two sessions" : "no plan graded yet", ""],
+    ];
+    $("ovKpis").innerHTML = tiles.map(([name, v, d, cls]) =>
+      `<div class="kpi"><div class="k">${name}</div><div class="v ${cls}">${v}</div><div class="d">${d || "&nbsp;"}</div></div>`).join("");
+  }
+
+  function renderVolume() {
+    const n = MINE.length, max = Math.max(1, ...MINE.map((i) => S[i].counted));
+    const f = frame($("volume"), { x: [-0.5, n - 0.5], y: [0, max * 1.12], h: 250, w: 640, hideX: true, yLabel: "counted shots" });
+    const step = f.sx(1) - f.sx(0), bw = Math.min(36, step * 0.7), every = Math.ceil(n / 12);
+    MINE.forEach((i, j) => {
+      const s = S[i];
+      let total = 0;
+      const parts = [];
+      for (const code of allClubs) {
+        const c = s.clubs[code];
+        if (!c || !c.n) continue;
+        const y0 = f.sy(total), y1 = f.sy(total + c.n);
+        el("rect", { x: f.sx(j) - bw / 2, y: y1, width: bw, height: y0 - y1, fill: colorOf(code), "fill-opacity": code === state.club ? .95 : .35 }, f.g);
+        total += c.n;
+        parts.push(`${code} ${c.n}`);
+      }
+      const hit = el("rect", { x: f.sx(j) - step / 2, y: f.P.t, width: step, height: f.H - f.P.t - f.P.b, fill: "transparent", "data-k": i }, f.g);
+      hit.style.cursor = "pointer";
+      el("title", {}, hit).textContent = `${s.label}\n${s.counted} shots: ${parts.join(", ")}`;
+      hit.onclick = () => openSession(i, false);
+      if ((n - 1 - j) % every === 0) txt(f.top, f.sx(j), f.H - f.P.b + 15, s.start.slice(5, 10), { "text-anchor": "middle" });
+    });
+  }
+
+  function linkRows(table, onPick) {
+    for (const tr of table.querySelectorAll("tr[data-k]")) {
+      tr.onclick = () => onPick(tr.dataset.k);
+      tr.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(tr.dataset.k); } };
+    }
+  }
+
+  function renderOverviewClubs() {
+    const table = $("ovClubs");
+    if (!OV.clubs.length) { table.innerHTML = `<tr><td class="empty">No counted shots yet.</td></tr>`; return; }
+    table.innerHTML = `<tr><th>Club</th><th>Sessions</th><th>Shots</th><th>Last used</th></tr>` + OV.clubs.map((c) =>
+      `<tr class="link${c.club === state.club ? " on" : ""}" tabindex="0" data-k="${esc(c.club)}"><td><b style="color:${colorOf(c.club)}">${esc(c.club)}</b></td><td>${c.sessions}</td><td>${c.shots}</td><td>${esc(S[c.last].label.split(",")[0])}</td></tr>`).join("");
+    linkRows(table, (code) => { state.club = code; render(); });
+  }
+
+  function planText(g) {
+    if (!g.n) return `${esc(g.club)} ${esc(g.label.toLowerCase())}: not graded`;
+    const base = g.baseline.n ? `${g.baseline.hits} of ${g.baseline.n} (${pctOf(g.baseline.hits, g.baseline.n)}%)` : "–";
+    return `${esc(g.club)} ${esc(g.label.toLowerCase())}: <span class="${g.above_baseline ? "good" : ""}">${g.hits} of ${g.n} (${pctOf(g.hits, g.n)}%)</span>, was ${base}`;
+  }
+
+  function renderSessionsTable() {
+    const table = $("sessions");
+    const rows = [...MINE].reverse().map((i) => {
+      const s = S[i], f = s.focus;
+      const clubs = Object.entries(s.clubs).filter(([, c]) => c.n).map(([code]) => esc(code)).join(" ");
+      const focus = f ? `${esc(f.club)} ${esc(f.label.toLowerCase())} ${windowText(f)}` : "–";
+      const plan = s.grades && s.grades.length ? s.grades.map(planText).join("<br>") : "–";
+      return `<tr class="link" tabindex="0" data-k="${i}"><td>${esc(s.label)}</td><td>${s.counted}</td><td>${clubs}</td><td>${focus}</td><td>${plan}</td></tr>`;
+    });
+    table.innerHTML = `<tr><th>Session</th><th>Shots</th><th>Clubs</th><th>Focus set</th><th>Last plan</th></tr>` + rows.join("");
+    linkRows(table, (k) => openSession(+k, false));
+  }
+
+  function renderOverview() {
+    const latest = S[S.length - 1];
+    if (!state.club || !OV.clubs.some((c) => c.club === state.club)) state.club = overviewClub();
+    renderChips(OV.clubs.map((c) => [c.club, c.shots]));
+    renderFocus(latest, "ovFocus", true);
+    renderOverviewKpis();
+    renderVolume();
+    renderBag(latest, "ovBag");
+    renderTrend("ovTrendMetric", "ovTrend", "ovTrendNote", null);
+    renderOverviewClubs();
+    renderSessionsTable();
   }
 
   function renderTable() {
@@ -430,25 +590,35 @@
     $("shots").innerHTML = head + body;
   }
 
-  function render() {
+  function renderSession() {
     const sess = S[state.session];
     if (!state.club || !sess.clubs[state.club]) state.club = defaultClub(sess);
-    renderChips(sess);
-    renderFocus(sess);
+    renderChips(Object.entries(sess.clubs).map(([code, c]) => [code, c.n]));
+    renderFocus(sess, "focus", false);
     renderKpis(sess);
     renderDispersion(sess);
     renderDplane();
     renderImpact();
     renderStrike(sess);
-    renderBag(sess);
+    renderBag(sess, "bag");
     renderMiss(sess);
-    renderTrend();
+    renderTrend("trendMetric", "trend", "trendNote", state.session);
     renderTable();
+  }
+
+  function render() {
+    const ov = state.session == null;
+    $("overview").hidden = !ov;
+    $("sessionView").hidden = ov;
+    $("home").classList.toggle("on", ov);
+    $("session").value = ov ? "overview" : String(state.session);
+    if (ov) renderOverview(); else renderSession();
   }
 
   if (DATA && DATA.player) { $("who").textContent = DATA.player; document.title = `Golf stats · ${DATA.player}`; }
   if (!S.length) { $("app").innerHTML = `<div class="empty">No sessions yet. Drop a TrackMan CSV in data/inbox and run <code>bin/golf ingest</code>.</div>`; return; }
   renderSessionSelect();
+  $("home").onclick = showOverview;
   render();
 })();
 </script>

@@ -23,6 +23,13 @@ The screenshot comes from `bin/golf demo`, which builds sessions from synthetic 
    file never changes owner when a player with a similar name shows up later. The report for
    each session is in `data/reports/`.
 
+The dashboard opens on an overview of every session. It shows the focus for your next session
+and the grade of the last plan, totals, shots per session by club, the bag, a trend for one
+club, and a table of sessions with the focus each one set and how its plan was graded. A plan
+counts as above baseline when its share of shots in window is higher than the share in the
+session that set it. Click a session row or bar, or pick it from the menu, to open that
+session. The Overview button returns to the overview.
+
 Ingest stores each export byte for byte in `data/golf.db` as an upload with its ingestion
 time, removes it from the inbox, skips a file it has seen, and skips shots already stored, so
 exporting the whole library again is safe. `bin/golf uploads` lists every stored upload.
@@ -170,7 +177,7 @@ src/golfstats/
   strike.py               mishit rating from smash factor, and the bag table
   focus.py                focus picker, plan writing and grading
   report.py               markdown session report
-  dashboard.py            builds the dashboard data
+  dashboard.py            builds the dashboard data, including the overview totals and plan results
   dashboard.html          dashboard template (vanilla JS, inline SVG, works offline)
   synth.py                synthetic TPS exports for tests and the demo
   sync.py                 upload site client: login keys, push, mirror, publish
@@ -196,6 +203,10 @@ python3.12 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 ```
+
+`tests/test_dashboard.py` also opens a dashboard in headless Chromium and checks that it lands
+on the overview. It uses Playwright's `chrome-headless-shell` under `~/.cache/ms-playwright`, or
+the binary named by `GOLF_TEST_CHROME`, and skips when there is neither.
 
 ## Known limits
 

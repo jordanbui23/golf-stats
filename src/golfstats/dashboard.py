@@ -11,6 +11,7 @@ from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
 
+from .clubs import club_order
 from .config import Config
 from .fields import FIELDS_BY_KEY
 from .focus import grade_plan, pick_focus, plan_for
@@ -49,6 +50,39 @@ def _club_block(shots: list[dict], ref: dict | None) -> dict:
             "strike": strike}
 
 
+def above_baseline(grade: dict) -> bool | None:
+    base = grade["baseline"]
+    if not grade["n"] or not base["n"]:
+        return None
+    return grade["hits"] * base["n"] > base["hits"] * grade["n"]
+
+
+def overview(out_sessions: list[dict]) -> dict:
+    player = out_sessions[-1]["player"] if out_sessions else ""
+    mine = [(idx, sess) for idx, sess in enumerate(out_sessions) if sess["player"] == player]
+    clubs: dict[str, dict] = {}
+    for idx, sess in mine:
+        for code, block in sess["clubs"].items():
+            if not block["n"]:
+                continue
+            c = clubs.setdefault(code, {"club": code, "shots": 0, "sessions": 0, "last": idx})
+            c["shots"] += block["n"]
+            c["sessions"] += 1
+            c["last"] = idx
+    graded = [g["above_baseline"] for _, sess in mine for g in sess["grades"] or []
+              if g["above_baseline"] is not None]
+    return {
+        "player": player,
+        "session_indexes": [idx for idx, _ in mine],
+        "sessions": len(mine),
+        "counted": sum(s["counted"] for _, s in mine),
+        "no_reads": sum(s["no_reads"] for _, s in mine),
+        "clubs": [clubs[code] for code in sorted(clubs, key=club_order)],
+        "plans_graded": len(graded),
+        "plans_above_baseline": sum(graded),
+    }
+
+
 def build_data(sessions: list[Session], cfg: Config, player: str = "") -> dict:
     out_sessions, shots = [], []
     for idx, sess in enumerate(sessions):
@@ -59,7 +93,7 @@ def build_data(sessions: list[Session], cfg: Config, player: str = "") -> dict:
             "shots": len(sess.shots), "counted": len(sess.counted), "no_reads": len(sess.no_reads),
             "clubs": {code: _club_block(group, refs.get(code)) for code, group in by_club(sess.shots).items()},
             "focus": pick_focus(sess, cfg, sessions),
-            "grades": grade_plan(plan, sess) if plan else None,
+            "grades": [{**g, "above_baseline": above_baseline(g)} for g in grade_plan(plan, sess)] if plan else None,
             "bag": [{k: _round(v) if isinstance(v, float) else v for k, v in row.items()}
                     for row in bag(sess, sessions, refs)],
         })
@@ -79,6 +113,7 @@ def build_data(sessions: list[Session], cfg: Config, player: str = "") -> dict:
         "windows": {"face_to_path": list(cfg.face_to_path_window), "face_angle": list(cfg.face_window),
                     "launch_direction": list(cfg.face_window)},
         "sessions": out_sessions,
+        "overview": overview(out_sessions),
         "shots": shots,
     }
 
