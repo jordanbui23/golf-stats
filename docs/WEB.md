@@ -186,7 +186,7 @@ Errors are `{"error": "<sentence for a person>"}` with a 4xx or 5xx status.
 | `GET /api/me` | `{username, display_name, players}`, 401 without a session |
 | `GET /api/dashboard` | `{ledger_version, analysis, pending}`. `analysis` is null or `{published_at, based_on_version, sessions}`. `pending` is a list of upload summaries, newest first, at most 500 |
 | `GET /api/dashboard/html` | The published dashboard HTML, stored gzipped and returned with `Content-Encoding: gzip`. 404 when there is none or it has no sessions |
-| `GET /api/insights` | `{insights}`: this user's insights, newest `created_at` first, at most 20. Item: `{session_id, session_label, created_at, model, summary, items}`, where each of `items` is `{title, why, drill, target}` |
+| `GET /api/insights` | `{insights}`: this user's insights, newest `created_at` first, at most 20. Item: `{session_id, session_label, created_at, model, summary, before, items}`, where `before` is a setup fix or null and each of `items` is `{title, why, drill, target}`. `drill` is `{name, setup, reps, pass}`, or a string in insights stored before drills had parts |
 | `GET /api/uploads` | `{uploads}`: visible upload summaries, newest first, at most 500 |
 | `POST /api/uploads` | Multipart, see below. 201 `{upload, duplicate: false}`, 200 `{upload, duplicate: true}` |
 | `GET /api/uploads/:id/raw` | The original file as `text/csv`. Gzip storage is returned with `Content-Encoding: gzip`. `Content-Disposition: attachment` unless `?inline=1` |
@@ -227,7 +227,7 @@ the dashboard runs in an opaque origin with no access to the cookie or the API.
 | `POST /api/sync/publish` | JSON `{ledger_version, results, dashboards}`. `results`: `[{id, result}]`, also copies `result.players` and `result.shots_in_file` into the row and rewrites the upload's `upload_players` rows, only when the row's `result_version` is NULL or not above the incoming `ledger_version`. The box may send up to 200 player names, because it adds alias targets. `dashboards`: `[{username, sessions, html_gz_b64}]`, where `html_gz_b64` is null when `sessions` is 0. An analysis row is written only when the incoming `ledger_version` is not lower than the stored `based_on_version`. 400 when `ledger_version` is newer than the site's. 200 `{published: <count>}` |
 | `GET /api/sync/users` | `{users: [{username, display_name, players, created_at}]}` |
 | `PUT /api/sync/users/:username` | JSON with any of `display_name`, `players`, `key_hash`. Creating a user requires `key_hash`, and `display_name` defaults to the username. A new `key_hash` deletes that user's sessions. 200 `{user}` |
-| `POST /api/sync/insights` | JSON `{uid, username, user_id, site_instance, session_id, session_label, created_at, model, body}`, where `body` is `{summary, items: [{title, why, drill, target}]}`. `uid` is 32 lowercase hex characters that the box chooses. `created_at` is UTC ending in `Z`. 1 to 10 items. `summary` and each item field are 1 to 600 characters, a title at most 200, with no control characters. 201 `{insight, duplicate: false}`. A second post with the same `uid` changes nothing and answers 200 `{insight, duplicate: true}` with the stored one. 409 when `site_instance` is not this database's. 404 unless the user with id `user_id`, from the sync state, still has that `username`. User ids are never reused, so a user made again under the same name never gets the old user's insights |
+| `POST /api/sync/insights` | JSON `{uid, username, user_id, site_instance, session_id, session_label, created_at, model, body}`, where `body` is `{summary, before?, items: [{title, why, drill: {name, setup, reps, pass}, target}]}`. `before` may be absent or empty. `uid` is 32 lowercase hex characters that the box chooses. `created_at` is UTC ending in `Z`. 1 to 10 items. `summary`, `before` and each item and drill field are 1 to 600 characters, a title and a drill name at most 200, with no control characters. 201 `{insight, duplicate: false}`. A second post with the same `uid` changes nothing and answers 200 `{insight, duplicate: true}` with the stored one. 409 when `site_instance` is not this database's. 404 unless the user with id `user_id`, from the sync state, still has that `username`. User ids are never reused, so a user made again under the same name never gets the old user's insights |
 | `DELETE /api/sync/users/:username` | Deletes the user, their sessions, their analysis and their insights. 204, or 404 |
 
 A publish may carry any subset of results and dashboards. The box sends results in batches
@@ -248,7 +248,8 @@ parser warnings.
 - `/`: header with the user's name, an Upload button (several files at once), Uploads, Sign
   out. Below it, the analysis time and the pending uploads, each with Show shots and Undo.
   Undo reverts an active upload and restores a reverted one.
-  Then the insights: the newest one in full, with the time it was made and its session, and
+  Then the insights: the newest one in full, with the time it was made, its session, its
+  "Before you hit" line when it has one, and each drill's name, setup, reps and pass rule, and
   the earlier ones folded under "Earlier insights". Nothing shows when there are none, or
   when `/api/insights` fails. Then the dashboard iframe. With no analysis yet, a sentence says the uploads are saved and
   the stats appear after the next analysis run.

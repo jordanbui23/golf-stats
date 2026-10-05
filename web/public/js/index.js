@@ -40,6 +40,16 @@ function pendingItem(u, refresh, status) {
   );
 }
 
+function drillPart(drill) {
+  if (typeof drill === "string") return el("dd", { text: drill });
+  return el("dd", { className: "drill" },
+    el("div", { className: "drill-name", text: drill.name }),
+    el("div", {}, el("span", { className: "sub", text: "Set up " }), drill.setup),
+    el("div", {}, el("span", { className: "sub", text: "Do " }), drill.reps),
+    el("div", {}, el("span", { className: "sub", text: "Done when " }), drill.pass),
+  );
+}
+
 function insightCard(insight, open) {
   const items = insight.items.map((item) =>
     el(
@@ -48,21 +58,24 @@ function insightCard(insight, open) {
       el("div", { className: "title", text: item.title }),
       el("dl", {},
         el("dt", { text: "Why" }), el("dd", { text: item.why }),
-        el("dt", { text: "Drill" }), el("dd", { text: item.drill }),
+        el("dt", { text: "Drill" }), drillPart(item.drill),
         el("dt", { text: "Target" }), el("dd", { text: item.target }),
       ),
     ),
   );
+  const before = insight.before ? el("p", { className: "before" }, el("span", { className: "sub", text: "Before you hit " }), insight.before) : null;
   const when = `Analysed ${fmtTime(insight.created_at)}. Session ${insight.session_label}.`;
   if (!open) {
     return el("details", { className: "insight" },
       el("summary", {}, el("span", { className: "meta", text: when }), el("div", { className: "takeaway", text: insight.summary })),
+      before,
       el("ol", { className: "steps" }, items),
     );
   }
   return el("article", { className: "insight card" },
     el("p", { className: "meta", text: when }),
     el("p", { className: "takeaway", text: insight.summary }),
+    before,
     el("ol", { className: "steps" }, items),
   );
 }

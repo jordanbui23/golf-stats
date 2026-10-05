@@ -17,13 +17,18 @@ REPORT = ("DR carry 217 ±26, smash 1.215, start -0.6 ±5.7. 6 of 16 shots. 7i a
           "Spin 3755 rpm. Window between -2° and +2°. Session 2026-10-02-1318.")
 
 
-def item(title="Fix the start line", why="Most drives started outside the window.", drill="Hit ten drivers.",
-         target="More drives inside the window."):
-    return {"title": title, "why": why, "drill": drill, "target": target}
+def drill(name="Start-line gate", setup="Two tees about four feet ahead on the target line.",
+          reps="Driver, three sets of five.", pass_="Four of five start through the gate."):
+    return {"name": name, "setup": setup, "reps": reps, "pass": pass_}
 
 
-def reply(*items, summary="Driver start line first.") -> str:
-    return json.dumps({"summary": summary, "items": list(items) or [item(), item(), item()]})
+def item(title="Fix the start line", why="Most drives started outside the window.", target="More drives inside the "
+         "window.", **kw):
+    return {"title": title, "why": why, "drill": drill(**kw), "target": target}
+
+
+def reply(*items, summary="Driver start line first.", **extra) -> str:
+    return json.dumps({"summary": summary, "items": list(items) or [item(), item(), item()], **extra})
 
 
 def test_a_number_copied_or_rounded_from_the_report_is_allowed():
@@ -47,6 +52,37 @@ def test_a_flipped_sign_an_exponent_or_a_hyphenated_number_is_caught():
     assert ins.invented_numbers(body, allowed) == ["+0.6", "-5.7", "2.17e2", "12", "−26", "+217"]
 
 
+def test_numbers_in_the_drill_and_the_setup_fix_are_checked_too():
+    allowed = ins.allowed_numbers(REPORT)
+    body = {"summary": "Start line.", "before": "Turn OERT on 30 times.",
+            "items": [item(setup="Tees 9 feet ahead."), item(reps="Driver, 4 sets of 6."), item(name="The 50 ball drill")]}
+    assert ins.invented_numbers(body, allowed) == ["30", "9", "4", "50"]
+
+
+def test_number_words_are_refused_outside_the_drill():
+    body = {"summary": "Six of sixteen in the window.", "before": "Hit two warm-up balls.",
+            "items": [item(why="Twenty-five yds short, half of them left."), item(target="One more DR in window."),
+                      item(title="Someone fix this", why="Twice as wide as a quarter of the 7i."),
+                      item(why="A third of your drives, two fifths of the 9i. The third shot was fine.")]}
+    assert ins.number_words(body) == ["six", "sixteen", "two", "twenty", "five", "half", "one", "twice", "quarter",
+                                      "third", "fifths"]
+    assert ins.number_words({"summary": "s", "items": [item(), item(), item()]}) == []
+
+
+def test_a_number_word_gets_the_retry_and_a_clean_reply_is_kept(tmp_path, capsys):
+    cfg = Config(data_dir=tmp_path / "data")
+    sessions = sessions_for(tmp_path, cfg)
+    calls = []
+
+    def ask(_cfg, _system, messages):
+        calls.append(messages)
+        return reply(item(why="Six of them."), item(), item()) if len(calls) == 1 else reply()
+
+    rec = ins.generate(sessions[-1], sessions, cfg, ask=ask)
+    assert len(calls) == 2 and "number words: six" in calls[1][-1]["content"][0]["text"]
+    assert rec["body"]["items"][0]["drill"]["reps"] == "Driver, three sets of five."
+
+
 def test_a_number_glued_to_a_unit_or_a_club_is_still_checked():
     allowed = ins.allowed_numbers("7i carry 140")
     body = {"summary": "7i carry 140.", "items": [item(why="It flew 150yds and the 9i was fine.")]}
@@ -56,7 +92,13 @@ def test_a_number_glued_to_a_unit_or_a_club_is_still_checked():
 def test_a_reply_in_a_code_fence_parses_and_is_trimmed():
     body, problems = ins.parse_reply("```json\n" + reply(item(title="  Fix it  "), item(), item()) + "\n```")
     assert problems == [] and body is not None
-    assert body["items"][0]["title"] == "Fix it" and len(body["items"]) == 3
+    assert body["items"][0]["title"] == "Fix it" and len(body["items"]) == 3 and "before" not in body
+    assert body["items"][0]["drill"] == drill()
+
+
+def test_a_setup_fix_is_kept_when_given():
+    body, problems = ins.parse_reply(reply(item(), item(), item(), before="  Turn OERT on.  "))
+    assert problems == [] and body is not None and body["before"] == "Turn OERT on."
 
 
 @pytest.mark.parametrize("text,problem", [
@@ -64,7 +106,13 @@ def test_a_reply_in_a_code_fence_parses_and_is_trimmed():
     ("{not json}", "not valid JSON"),
     (reply(item(), item()), "3 to 5 objects"),
     (reply(item(), item(), item(title="x" * 51)), "item 3 title is longer than 50"),
-    (reply(item(), item(), {**item(), "drill": ""}), "item 3 needs drill"),
+    (reply(item(), item(), {**item(), "drill": "Hit ten balls."}), "item 3 drill must be an object"),
+    (reply(item(), item(), item(pass_="")), "item 3 drill.pass must be a sentence"),
+    (reply(item(), item(), {**item(), "drill": {k: v for k, v in drill().items() if k != "reps"}}),
+     "item 3 drill.reps must be a sentence"),
+    (reply(item(), item(), item(name="n" * 41)), "item 3 drill.name is longer than 40"),
+    (reply(item(), item(), item(), before="b" * 161), "before is longer than 160"),
+    (reply(item(), item(), item(), before=3), "before must be text"),
     (reply(item(), item(), item(), summary="s" * 141), "summary is longer than 140"),
     (reply(item(), item(), item(why="two\nlines")), "item 3 why holds a line break"),
     (reply(item(), item(), item(), summary="tab\there"), "summary holds a line break"),

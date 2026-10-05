@@ -3,7 +3,8 @@ import { HttpError, bad, json, notFound, parseJsonColumn, readJson } from "./htt
 const BODY_LIMIT = 64 * 1024;
 const LIST_LIMIT = 20;
 const MAX_ITEMS = 10;
-const ITEM_FIELDS = { title: 200, why: 600, drill: 600, target: 600 };
+const ITEM_FIELDS = { title: 200, why: 600, target: 600 };
+const DRILL_FIELDS = { name: 200, setup: 600, reps: 600, pass: 600 };
 const SUMMARY_MAX = 600;
 const CONTROL = /[\u0000-\u001f\u007f]/;
 const COLUMNS = "session_id, session_label, created_at, model, body";
@@ -27,14 +28,20 @@ function createdAtField(value) {
 function bodyField(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw bad("body must be an object.");
   const summary = textField(value.summary, "body.summary", SUMMARY_MAX);
+  const before = value.before === undefined || value.before === "" ? undefined : textField(value.before, "body.before", SUMMARY_MAX);
   const items = value.items;
   if (!Array.isArray(items) || items.length < 1 || items.length > MAX_ITEMS) throw bad(`body.items must be a list of 1 to ${MAX_ITEMS} items.`);
+  const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
   return {
     summary,
+    ...(before === undefined ? {} : { before }),
     items: items.map((item, i) => {
-      if (item === null || typeof item !== "object" || Array.isArray(item)) throw bad(`body.items[${i}] must be an object.`);
+      if (!isObject(item)) throw bad(`body.items[${i}] must be an object.`);
       const out = {};
       for (const [key, max] of Object.entries(ITEM_FIELDS)) out[key] = textField(item[key], `body.items[${i}].${key}`, max);
+      if (!isObject(item.drill)) throw bad(`body.items[${i}].drill must be an object with name, setup, reps and pass.`);
+      out.drill = {};
+      for (const [key, max] of Object.entries(DRILL_FIELDS)) out.drill[key] = textField(item.drill[key], `body.items[${i}].drill.${key}`, max);
       return out;
     }),
   };
@@ -48,6 +55,7 @@ function insightItem(row) {
     created_at: row.created_at,
     model: row.model,
     summary: body.summary,
+    before: body.before ?? null,
     items: body.items,
   };
 }

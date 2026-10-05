@@ -173,7 +173,10 @@ bin/golf insights --user jordan
 
 It syncs first, so an upload made on the site a minute ago counts. Then it sends the latest
 session's report to a model and asks for three to five action items, most important first.
-Each item has a title, the evidence, a drill for the bay and a target for the next session.
+Each item has a title, the evidence, a drill and a target for the next session. A drill is a
+named practice drill with a physical setup or instant feedback, such as a tee gate on the start
+line or foot spray on the face, with its reps and the result that says you can move on. A setup
+fix such as turning OERT on goes in a "Before you hit" line, not in an item.
 The site shows the newest insights above the dashboard with the time they were made, and
 keeps the earlier ones below. Without `--user` it runs for every site user. A session that
 already has insights is skipped, and `--again` asks for new ones. Without a site, it prints
@@ -184,8 +187,12 @@ same markdown report as `bin/golf report`, plus the plan line, and every number 
 must appear in that report, as written or rounded. A `+` or `-` sign written before a number
 must match the report too. A reply with any other number, or with the wrong shape or length,
 gets one retry that names the problem. A second failure stores nothing. The check proves that
-each number is in the report, not that it sits next to the right metric. It covers digits only,
-so a count the model writes in words is not checked.
+each number is in the report, not that it sits next to the right metric. Number words,
+fractions and multipliers such as "six", "half", "a third of" or "twice" are refused outside the
+drill. That check is a word list, so it cannot catch every way to state a quantity. Vague words
+such as "most" or "few" are allowed and carry no figure.
+The drill is the one place the model sets numbers of its own, such as sets, balls and how far
+ahead to put a tee. It writes them in words, and they are coaching, not measurements.
 
 The call goes to Amazon Bedrock through the AWS CLI, so the CLI must be installed and signed in.
 `[insights]` in `config.toml` sets the model, the AWS profile and the region.

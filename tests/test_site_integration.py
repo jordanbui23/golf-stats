@@ -191,7 +191,9 @@ def test_insights_reach_the_signed_in_golfer_through_the_real_site(site, cfg_fil
     assert web.login("ana", "a long enough password")[0] == 200
     assert web.upload(write_export(tmp_path / "exports", "s.csv", player="Ana", plan=[("7 Iron", 24)]),
                       ["Ana"])[0] == 201
-    item = {"title": "Find the centre", "why": "Most strikes were thin.", "drill": "Hit ten 7-irons.",
+    item = {"title": "Find the centre", "why": "Most strikes were thin.",
+            "drill": {"name": "Face spray", "setup": "Spray the face.", "reps": "7-iron, two sets of five.",
+                      "pass": "Four of five marks sit in the middle of the face."},
             "target": "More solid strikes."}
     answer = json.dumps({"summary": "Strike first.", "items": [item, item, item]})
     monkeypatch.setattr(cli, "generate", lambda s, ss, c: ins.generate(s, ss, c, ask=lambda *_: answer))

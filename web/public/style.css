@@ -82,6 +82,11 @@ details.insight summary { cursor: pointer; }
 details.insight summary .takeaway { margin: 2px 0 0; font-weight: 500; }
 details.insight[open] summary { margin-bottom: 10px; }
 .earlier { display: flex; flex-direction: column; gap: 8px; }
+.insight .before { margin: 0 0 12px; padding: 8px 10px; border-left: 3px solid var(--warn); background: rgba(245, 184, 65, .08); border-radius: 6px; }
+.insight .sub { color: var(--muted); font-size: 12px; margin-right: 4px; }
+.insight .before .sub { color: var(--warn); }
+ol.steps dd.drill { display: flex; flex-direction: column; gap: 2px; }
+ol.steps .drill-name { font-weight: 600; color: var(--accent); }
 
 .frame-slot { display: block; }
 iframe.dashboard { display: block; width: 100%; height: calc(100vh - 56px); border: 0; border-top: 1px solid var(--line); background: var(--bg); }

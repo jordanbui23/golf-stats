@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { makeSite } from "./helpers.mjs";
 
 const PW = "pass phrase two";
-const item = (title = "Start the driver inside the window") => ({ title, why: "6 of 16 inside.", drill: "Hit 20 drivers.", target: "More than 6 of 16." });
+const drill = { name: "Start-line gate", setup: "Two tees four feet ahead.", reps: "Driver, three sets of five.", pass: "Four of five start through the gate." };
+const item = (title = "Start the driver inside the window") => ({ title, why: "6 of 16 inside.", drill, target: "More than 6 of 16." });
 
 const ids = {};
 let instance = 0;
@@ -41,6 +42,11 @@ test("the box publishes an insight once per uid and only with the token", async 
   const body = await first.json();
   assert.equal(body.duplicate, false);
   assert.equal(body.insight.items.length, 3);
+  assert.deepEqual(body.insight.items[0].drill, drill);
+  assert.equal(body.insight.before, null);
+  const withBefore = await site.sync("POST", "/api/sync/insights", insight({ uid: "f".repeat(32), body: { summary: "s", before: " Turn OERT on. ", items: [item()] } }));
+  assert.equal((await withBefore.json()).insight.before, "Turn OERT on.");
+  site.db.prepare("DELETE FROM insights WHERE uid = ?").run("f".repeat(32));
   const again = await site.sync("POST", "/api/sync/insights", insight({ body: { summary: "other", items: [item()] } }));
   assert.equal(again.status, 200);
   const dup = await again.json();
@@ -90,6 +96,10 @@ test("a malformed insight is refused with a sentence", async () => {
     { body: { summary: "s", items: [] } },
     { body: { summary: "s", items: Array.from({ length: 11 }, () => item()) } },
     { body: { summary: "s", items: [{ ...item(), drill: 3 }] } },
+    { body: { summary: "s", items: [{ ...item(), drill: "Hit ten balls." }] } },
+    { body: { summary: "s", items: [{ ...item(), drill: { ...drill, pass: "" } }] } },
+    { body: { summary: "s", items: [{ ...item(), drill: { name: "n", setup: "s", reps: "r" } }] } },
+    { body: { summary: "s", before: 3, items: [item()] } },
     { body: { summary: "s", items: [{ ...item(), why: "line\nbreak" }] } },
     { body: { summary: "x".repeat(601), items: [item()] } },
   ];
@@ -109,7 +119,7 @@ test("a user sees only their own insights, newest first", async () => {
   await site.sync("POST", "/api/sync/insights", insight({ uid: "3".repeat(32), username: "chris", body: { summary: "Chris only.", items: [item()] } }));
   const mine = await (await site.request("GET", "/api/insights", { cookie: jordan })).json();
   assert.deepEqual(mine.insights.map((i) => i.session_id), ["2026-10-04-1700", "2026-10-02-1318"]);
-  assert.deepEqual(Object.keys(mine.insights[0]).sort(), ["created_at", "items", "model", "session_id", "session_label", "summary"]);
+  assert.deepEqual(Object.keys(mine.insights[0]).sort(), ["before", "created_at", "items", "model", "session_id", "session_label", "summary"]);
   const theirs = await (await site.request("GET", "/api/insights", { cookie: chris })).json();
   assert.deepEqual(theirs.insights.map((i) => i.summary), ["Chris only."]);
 });

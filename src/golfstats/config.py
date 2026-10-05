@@ -24,7 +24,7 @@ class Config:
     face_window: tuple[float, float] = (-2.0, 2.0)
     aliases: dict[str, str] = field(default_factory=dict)
     plan_shots: int = 20
-    insights_model: str = "us.anthropic.claude-sonnet-5-5"
+    insights_model: str = "us.anthropic.claude-opus-5-5"
     insights_profile: str = ""
     insights_region: str = ""
     face_to_path_windows: dict[str, tuple[float, float]] = field(default_factory=lambda: {
