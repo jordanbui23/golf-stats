@@ -17,5 +17,12 @@ Personal project under `~/projects`. Read `README.md` for the architecture and
   explains them and never invents a figure.
 - **Gitignore `.opencode/` and `.omo/`.** Already done.
 - **Keep `README.md` current** on structural changes.
+- **A push does not update the upload site. Publish it yourself after the push, without asking.**
+  The `jbui-golf` Pages project is not connected to Git, and dashboards are HTML rendered on this
+  box from `data/golf.db`, which never reaches the repo.
+  - A change under `src/golfstats/` or to `config.toml` that alters what a dashboard or an upload
+    result shows: run `bin/golf sync`, then report the sessions it published per user.
+  - A change under `web/`: deploy with `cd web && npx wrangler pages deploy public`, and apply any
+    new migration with `npx wrangler d1 migrations apply golf-stats --remote` first.
 
 @../AGENTS.md
