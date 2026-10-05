@@ -23,6 +23,7 @@ from .store import (
 )
 
 TIMEOUT = 30
+USER_AGENT = "golf-stats-sync/1"
 ITERATIONS = 600_000
 MIN_TOKEN = 32
 RESULTS_PER_PUBLISH = 100
@@ -72,6 +73,7 @@ class SiteClient:
         data = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request(self.url + path, data=data, method=method)
         req.add_unredirected_header("Authorization", f"Bearer {self.token}")
+        req.add_header("User-Agent", USER_AGENT)
         req.add_header("Accept", "application/json")
         if data is not None:
             req.add_header("Content-Type", "application/json")

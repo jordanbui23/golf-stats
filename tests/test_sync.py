@@ -103,6 +103,7 @@ def test_https_and_local_http_are_accepted(url, clean):
 
 class _Handler(BaseHTTPRequestHandler):
     seen: list[tuple[str, str | None]] = []
+    agents: list[str | None] = []
 
     def log_message(self, *_a):
         pass
@@ -118,6 +119,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.seen.append((self.path, self.headers.get("Authorization")))
+        self.agents.append(self.headers.get("User-Agent"))
         if self.path == "/api/sync/state":
             self._send(200, {"ledger_version": 3, "uploads": [], "users": []})
         elif self.path == "/api/sync/users":
@@ -129,6 +131,7 @@ class _Handler(BaseHTTPRequestHandler):
 @pytest.fixture
 def server():
     _Handler.seen = []
+    _Handler.agents = []
     httpd = HTTPServer(("127.0.0.1", 0), _Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -147,6 +150,11 @@ def test_the_client_sends_the_bearer_token_and_never_follows_a_redirect(server):
     assert redirect.value.status == 302 and (down.value.status, down.value.message) == (503, "Sync is not configured.")
     assert _Handler.seen == [("/api/sync/state", "Bearer " + "s" * 40), ("/api/sync/users", "Bearer " + "s" * 40),
                              ("/api/sync/uploads/1/raw", "Bearer " + "s" * 40)]
+
+
+def test_the_client_names_itself_so_cloudflare_does_not_block_python_urllib(server):
+    SiteClient(server, "s" * 40).state()
+    assert _Handler.agents == ["golf-stats-sync/1"]
 
 
 def test_site_settings_are_written_private(tmp_path):
