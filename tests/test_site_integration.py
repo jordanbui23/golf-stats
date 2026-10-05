@@ -177,3 +177,29 @@ def test_upload_revert_and_sync_round_trip_through_the_real_site(site, cfg_file,
     assert "jordan: 1 session(s) published." in out
     assert web.json("POST", "/api/logout")[0] == 204
     assert web.json("GET", "/api/me")[0] == 401
+
+
+def test_insights_reach_the_signed_in_golfer_through_the_real_site(site, cfg_file, tmp_path, monkeypatch, capsys):
+    from golfstats import __main__ as cli
+    from golfstats import insights as ins
+
+    url, token = site
+    assert run(cfg_file, monkeypatch, capsys, "site", "--url", url, "--token-stdin", stdin=token + "\n")[0] == 0
+    assert run(cfg_file, monkeypatch, capsys, "user", "add", "ana", "--player", "Ana", "--password-stdin",
+               stdin="a long enough password\n")[0] == 0
+    web = Browser(url)
+    assert web.login("ana", "a long enough password")[0] == 200
+    assert web.upload(write_export(tmp_path / "exports", "s.csv", player="Ana", plan=[("7 Iron", 24)]),
+                      ["Ana"])[0] == 201
+    item = {"title": "Find the centre", "why": "Most strikes were thin.", "drill": "Hit ten 7-irons.",
+            "target": "More solid strikes."}
+    answer = json.dumps({"summary": "Strike first.", "items": [item, item, item]})
+    monkeypatch.setattr(cli, "generate", lambda s, ss, c: ins.generate(s, ss, c, ask=lambda *_: answer))
+
+    code, out = run(cfg_file, monkeypatch, capsys, "insights")
+    assert code == 0 and "pulled 1" in out and "Published to the site." in out
+    status, body = web.json("GET", "/api/insights")
+    assert status == 200 and [i["summary"] for i in body["insights"]] == ["Strike first."]
+    assert body["insights"][0]["items"][0] == item and body["insights"][0]["session_id"] == "2026-10-01-1800"
+    code, out = run(cfg_file, monkeypatch, capsys, "insights", "--again")
+    assert code == 0 and len(web.json("GET", "/api/insights")[1]["insights"]) == 2

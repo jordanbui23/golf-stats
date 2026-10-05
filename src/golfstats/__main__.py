@@ -8,11 +8,16 @@ from pathlib import Path
 from .config import Config, load_config
 from .dashboard import write_dashboards
 from .focus import grade_plan, make_plan, pick_focus, plan_for, save_plan
+from .insights import InsightError, generate, render_text, utc_now
 from .report import bound_text, render_report, unit_suffix
 from .stats import Session, split_sessions
-from .store import connect, ingest_file, list_uploads, load_shots, merge_aliases
+from .store import (
+    connect, ingest_file, latest_insight, list_uploads, load_shots, mark_insight_published, merge_aliases, save_insight,
+)
 from .synth import demo_exports
-from .sync import SiteError, key_hash, load_site, login_key, save_site, sync
+from .sync import (
+    SiteClient, SiteError, SyncReport, insight_payload, key_hash, load_site, login_key, save_site, sync, user_sessions,
+)
 
 
 def _sessions(cfg: Config) -> list[Session]:
@@ -220,21 +225,116 @@ def cmd_site(args: argparse.Namespace, cfg: Config) -> int:
     return 0
 
 
+def _print_sync(report: SyncReport) -> None:
+    print(f"Pushed {report.pushed}, merged {report.merged}, pulled {report.pulled}"
+          + (f", downloaded again {report.redownloaded}" if report.redownloaded else "")
+          + f", state changes {report.state_changes}.")
+    for user, n in report.published.items():
+        print(f"  {user}: {n} session(s) published.")
+    if report.insights:
+        print(f"  {report.insights} earlier insight(s) published.")
+    print(f"Ledger version {report.ledger_version}.")
+    for err in report.errors:
+        print(f"  upload error: {err}")
+
+
 def cmd_sync(args: argparse.Namespace, cfg: Config) -> int:
     try:
         report = sync(cfg, load_site(cfg.site_path))
     except (SiteError, FileNotFoundError, ValueError) as exc:
         print(f"Sync failed: {exc}")
         return 1
-    print(f"Pushed {report.pushed}, merged {report.merged}, pulled {report.pulled}"
-          + (f", downloaded again {report.redownloaded}" if report.redownloaded else "")
-          + f", state changes {report.state_changes}.")
-    for user, n in report.published.items():
-        print(f"  {user}: {n} session(s) published.")
-    print(f"Ledger version {report.ledger_version}.")
-    for err in report.errors:
-        print(f"  upload error: {err}")
+    _print_sync(report)
     return 1 if report.errors else 0
+
+
+def _insight_for(conn, who: str, user: dict | None, sessions: list[Session], args: argparse.Namespace,
+                 cfg: Config, client: SiteClient | None, site_instance: int | None) -> tuple[bool, bool]:
+    if args.session:
+        target = next((s for s in sessions if s.id == args.session), None)
+    else:
+        target = max(sessions, key=lambda s: s.start) if sessions else None
+    if target is None:
+        if not args.session:
+            print(f"{who}: no sessions yet.")
+        return False, False
+    done = latest_insight(conn, user, site_instance, target.id)
+    if done and not args.again:
+        print(f"{who}: session {target.id} already has insights from {done['created_at']}. "
+              "Add --again for new ones.")
+        return True, True
+    print(f"{who}: analysing session {target.id} with {cfg.insights_model}.")
+    try:
+        rec = generate(target, sessions, cfg)
+    except InsightError as exc:
+        print(f"{who}: no insights for session {target.id}: {exc}.")
+        return True, False
+    save_insight(conn, rec, user, site_instance)
+    print(render_text(rec))
+    if client is None or user is None:
+        return True, True
+    try:
+        client.push_insight(insight_payload({**rec, "username": user["username"], "site_user_id": user.get("id"),
+                                             "site_instance": site_instance}))
+    except SiteError as exc:
+        print(f"Not published: {exc}. The next sync tries again.")
+        return True, False
+    mark_insight_published(conn, rec["uid"], utc_now())
+    print("Published to the site.")
+    return True, True
+
+
+def cmd_insights(args: argparse.Namespace, cfg: Config) -> int:
+    wanted = {u.lower() for u in args.user}
+    client = None
+    site_instance = None
+    sync_errors = False
+    if cfg.site_path.exists():
+        try:
+            client = load_site(cfg.site_path)
+            report = sync(cfg, client)
+        except (SiteError, FileNotFoundError, ValueError) as exc:
+            print(f"Insights not run, because sync failed: {exc}")
+            return 1
+        _print_sync(report)
+        sync_errors = bool(report.errors)
+        site_instance = report.site_instance
+        if site_instance is None:
+            print("Insights not run, because the site has no site_instance. Apply its D1 migrations first.")
+            return 1
+        if report.dashboards_blocked:
+            print("Insights not run, because the dashboards were not published and the shots are incomplete.")
+            return 1
+    conn = connect(cfg.db_path)
+    try:
+        if client is not None:
+            shots, _ = merge_aliases(load_shots(conn), cfg.aliases)
+            groups = [(u["username"], u, user_sessions(shots, u, cfg)) for u in report.users]
+            kind = "site user"
+        else:
+            sessions = _sessions(cfg)
+            groups = [(p or "all players", None, [s for s in sessions if s.player == p])
+                      for p in sorted({s.player for s in sessions})]
+            kind = "player"
+        chosen = [g for g in groups if not wanted or g[0].lower() in wanted]
+        missing = wanted - {g[0].lower() for g in chosen}
+        if missing:
+            print(f"No {kind} named {', '.join(sorted(missing))}.")
+            return 1
+        found = ok = 0
+        for who, user, player_sessions in chosen:
+            had, good = _insight_for(conn, who, user, player_sessions, args, cfg, client, site_instance)
+            found += had
+            ok += good
+    finally:
+        conn.close()
+    if args.session and not found:
+        print(f"No session {args.session!r}. Try `bin/golf sessions`.")
+        return 1
+    if not found:
+        print("Nothing to analyse: no sessions yet.")
+        return 1
+    return 0 if ok == found and not sync_errors else 1
 
 
 def _password_hash(args: argparse.Namespace) -> str:
@@ -291,6 +391,12 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_site)
     sub.add_parser("sync", help="push local uploads, pull the site's, publish dashboards").set_defaults(
         func=cmd_sync)
+    p = sub.add_parser("insights", help="sync, then ask a model for action items on each user's latest session")
+    p.add_argument("--user", action="append", default=[],
+                   help="only this site user, or this player when no site is set (repeatable)")
+    p.add_argument("--session", help="this session id instead of the latest")
+    p.add_argument("--again", action="store_true", help="analyse a session that already has insights")
+    p.set_defaults(func=cmd_insights)
     p = sub.add_parser("user", help="manage site users")
     users = p.add_subparsers(dest="action", required=True)
     u = users.add_parser("add", help="create a user")

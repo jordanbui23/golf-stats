@@ -68,6 +68,21 @@ table.shots th { color: var(--muted); font-weight: 600; position: sticky; top: 0
 table.shots th small { font-weight: 400; }
 table.shots td.text, table.shots th:nth-child(-n+3) { text-align: left; }
 
+.insight { margin: 0 0 8px; }
+.insight .takeaway { margin: 4px 0 10px; font-weight: 600; }
+.insight .meta { margin: 0; }
+ol.steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 12px; }
+ol.steps li::marker { color: var(--accent); font-weight: 650; }
+ol.steps .title { font-weight: 650; }
+ol.steps dl { margin: 4px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 3px 10px; }
+ol.steps dt { color: var(--muted); font-size: 12.5px; padding-top: 1px; }
+ol.steps dd { margin: 0; }
+details.insight { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+details.insight summary { cursor: pointer; }
+details.insight summary .takeaway { margin: 2px 0 0; font-weight: 500; }
+details.insight[open] summary { margin-bottom: 10px; }
+.earlier { display: flex; flex-direction: column; gap: 8px; }
+
 .frame-slot { display: block; }
 iframe.dashboard { display: block; width: 100%; height: calc(100vh - 56px); border: 0; border-top: 1px solid var(--line); background: var(--bg); }
 

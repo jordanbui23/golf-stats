@@ -58,11 +58,13 @@ test("state returns the ledger version, uploads and users in their documented sh
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.ledger_version, 1);
+  assert.ok(Number.isSafeInteger(body.site_instance) && body.site_instance > 0);
   assert.deepEqual(Object.keys(body.uploads[0]).sort(), [
     "changed_version", "encoding", "filename", "id", "replace_stored", "reverted_at", "sha256", "size", "uid", "uploaded_at", "uploaded_by",
   ]);
   assert.equal(body.uploads[0].encoding, "identity");
-  assert.deepEqual(body.users, [{ username: "jordan", display_name: "jordan", players: ["Jordan"] }]);
+  const id = site.db.prepare("SELECT id FROM users WHERE username = 'jordan'").get().id;
+  assert.deepEqual(body.users, [{ id, username: "jordan", display_name: "jordan", players: ["Jordan"] }]);
 });
 
 test("sync push creates a box upload with a normalised time", async () => {

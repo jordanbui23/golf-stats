@@ -40,6 +40,41 @@ function pendingItem(u, refresh, status) {
   );
 }
 
+function insightCard(insight, open) {
+  const items = insight.items.map((item) =>
+    el(
+      "li",
+      {},
+      el("div", { className: "title", text: item.title }),
+      el("dl", {},
+        el("dt", { text: "Why" }), el("dd", { text: item.why }),
+        el("dt", { text: "Drill" }), el("dd", { text: item.drill }),
+        el("dt", { text: "Target" }), el("dd", { text: item.target }),
+      ),
+    ),
+  );
+  const when = `Analysed ${fmtTime(insight.created_at)}. Session ${insight.session_label}.`;
+  if (!open) {
+    return el("details", { className: "insight" },
+      el("summary", {}, el("span", { className: "meta", text: when }), el("div", { className: "takeaway", text: insight.summary })),
+      el("ol", { className: "steps" }, items),
+    );
+  }
+  return el("article", { className: "insight card" },
+    el("p", { className: "meta", text: when }),
+    el("p", { className: "takeaway", text: insight.summary }),
+    el("ol", { className: "steps" }, items),
+  );
+}
+
+function insightsSection(insights) {
+  if (!insights.length) return [];
+  const [latest, ...earlier] = insights;
+  const parts = [el("h2", { text: "Insights" }), insightCard(latest, true)];
+  if (earlier.length) parts.push(el("h2", { text: "Earlier insights" }), el("div", { className: "earlier" }, earlier.map((i) => insightCard(i, false))));
+  return parts;
+}
+
 let fitted = null;
 
 function fitFrame(frame, top) {
@@ -57,21 +92,24 @@ async function start() {
   const app = document.getElementById("app");
   const status = el("div", { className: "status", role: "status", "aria-live": "polite" });
   const summary = el("section", { className: "summary" });
+  const insightsSlot = el("section", { className: "insights" });
   const frameSlot = el("section", { className: "frame-slot" });
   const picker = el("input", { type: "file", accept: ".csv,text/csv", multiple: true, className: "hidden" });
   const uploadButton = el("button", { type: "button", className: "primary", text: "Upload", onClick: () => picker.click() });
   const top = header(me, [uploadButton, el("a", { href: "/uploads", text: "Uploads" })]);
-  app.replaceChildren(top, el("main", {}, status, summary), frameSlot, picker);
+  app.replaceChildren(top, el("main", {}, status, summary, insightsSlot), frameSlot, picker);
 
   let frameFor = null;
   const refresh = async () => {
     let data;
+    let insights;
     try {
-      data = await api("/api/dashboard");
+      [data, insights] = await Promise.all([api("/api/dashboard"), api("/api/insights").catch(() => ({ insights: [] }))]);
     } catch (err) {
       message(summary, err.message, "error");
       return;
     }
+    insightsSlot.replaceChildren(...insightsSection(insights.insights));
     const parts = [];
     if (data.analysis) {
       parts.push(el("p", { className: "meta", text: `Analysis from ${fmtTime(data.analysis.published_at)}.` }));

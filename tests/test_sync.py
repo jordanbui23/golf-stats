@@ -20,6 +20,7 @@ from test_store_cli import START, write_conflicting, write_export
 class FakeSite:
     def __init__(self, users: list[dict] | None = None):
         self.version = 0
+        self.instance = 7
         self.uploads: list[dict] = []
         self.blobs: dict[int, tuple[bytes, str]] = {}
         self.users_list = users or []
@@ -41,7 +42,7 @@ class FakeSite:
 
     def state(self) -> dict:
         self.calls.append("state")
-        return {"ledger_version": self.version, "uploads": [dict(u) for u in self.uploads],
+        return {"ledger_version": self.version, "site_instance": self.instance, "uploads": [dict(u) for u in self.uploads],
                 "users": [dict(u) for u in self.users_list]}
 
     def download(self, site_id: int) -> tuple[bytes, str]:

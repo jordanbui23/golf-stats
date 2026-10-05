@@ -24,6 +24,9 @@ class Config:
     face_window: tuple[float, float] = (-2.0, 2.0)
     aliases: dict[str, str] = field(default_factory=dict)
     plan_shots: int = 20
+    insights_model: str = "us.anthropic.claude-sonnet-5-5"
+    insights_profile: str = ""
+    insights_region: str = ""
     face_to_path_windows: dict[str, tuple[float, float]] = field(default_factory=lambda: {
         "straight": (-2.0, 2.0), "draw": (-4.0, 0.0), "fade": (0.0, 4.0)})
 
@@ -73,6 +76,10 @@ def load_config(path: Path | None = None, data_dir: Path | None = None) -> Confi
     for key in ("min_shots", "smash_index_min", "impact_offset_spread_mm", "low_point_behind_share",
                 "mishit_smash_ratio", "mishit_share_max", "curve_bias_pct", "plan_shots"):
         setattr(cfg, key, focus.get(key, getattr(cfg, key)))
+    insights = raw.get("insights", {})
+    cfg.insights_model = str(insights.get("model", cfg.insights_model))
+    cfg.insights_profile = str(insights.get("aws_profile", cfg.insights_profile))
+    cfg.insights_region = str(insights.get("region", cfg.insights_region))
     cfg.face_window = tuple(focus.get("face_window", cfg.face_window))
     for shape, window in focus.get("face_to_path_window", {}).items():
         cfg.face_to_path_windows[shape] = tuple(window)

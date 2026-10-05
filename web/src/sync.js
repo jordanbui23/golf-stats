@@ -26,15 +26,17 @@ function userItem(row) {
 
 export async function syncState(env) {
   const db = env.DB;
-  const [version, uploads, users] = await db.batch([
+  const [version, instance, uploads, users] = await db.batch([
     db.prepare("SELECT value FROM meta WHERE key = 'ledger_version'"),
+    db.prepare("SELECT value FROM meta WHERE key = 'site_instance'"),
     db.prepare(`SELECT ${UPLOAD_COLUMNS} FROM uploads ORDER BY id`),
-    db.prepare("SELECT username, display_name, players FROM users ORDER BY id"),
+    db.prepare("SELECT id, username, display_name, players FROM users ORDER BY id"),
   ]);
   return json({
     ledger_version: version.results[0].value,
+    site_instance: instance.results[0]?.value ?? null,
     uploads: uploads.results.map(syncItem),
-    users: users.results.map(userItem),
+    users: users.results.map((r) => ({ id: r.id, ...userItem(r) })),
   });
 }
 
@@ -238,6 +240,7 @@ export async function deleteUser(env, rawName) {
   await db.batch([
     db.prepare("DELETE FROM web_sessions WHERE user_id = ?").bind(row.id),
     db.prepare("DELETE FROM analyses WHERE user_id = ?").bind(row.id),
+    db.prepare("DELETE FROM insights WHERE user_id = ?").bind(row.id),
     db.prepare("DELETE FROM users WHERE id = ?").bind(row.id),
   ]);
   return empty(204);

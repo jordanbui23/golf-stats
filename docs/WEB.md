@@ -6,9 +6,9 @@ and this file disagree, fix both together.
 ## Shape
 
 The site runs on Cloudflare Pages: static pages in `web/public/`, Pages Functions in
-`web/functions/`, one D1 database. It does four things: sign-in, storing each uploaded CSV
-with its ingestion time, revert and restore of an upload, and serving the latest published
-analysis. It runs no analysis. The free plan caps a request at 10 ms of CPU, and the Python
+`web/functions/`, one D1 database. It does five things: sign-in, storing each uploaded CSV
+with its ingestion time, revert and restore of an upload, serving the latest published
+analysis, and keeping the insights the box publishes. It runs no analysis. The free plan caps a request at 10 ms of CPU, and the Python
 parser alone takes longer than that on one export.
 
 The analysis runs on the box, meaning any machine with this repo, when someone runs
@@ -85,9 +85,11 @@ their own players allow.
 
 ## D1 schema
 
-`web/migrations/0001_init.sql`, applied with `wrangler d1 migrations apply`. It has not been
-applied to a deployed database yet. Once it has, every schema change goes in a new
-migration file.
+`web/migrations/`, applied in name order with `wrangler d1 migrations apply`. `0001_init.sql`
+holds the first schema and is deployed, so every schema change goes in a new migration file.
+`0002_insights.sql` adds the `insights` table at the end of the block below, and a random
+`site_instance` row in `meta` that names this database. A new database gets a new one, so the
+box never mistakes it for the database an insight was made for.
 
 ```sql
 CREATE TABLE users (
@@ -149,6 +151,17 @@ CREATE TABLE analyses (
   sessions INTEGER NOT NULL,
   html_gz BLOB
 ) STRICT;
+CREATE TABLE insights (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid TEXT NOT NULL UNIQUE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL,
+  session_label TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  model TEXT NOT NULL,
+  body TEXT NOT NULL
+) STRICT;
+CREATE INDEX insights_user ON insights(user_id, created_at);
 ```
 
 Times on the site are ISO 8601 UTC from `new Date().toISOString()`. D1 returns a BLOB as a JS
@@ -173,6 +186,7 @@ Errors are `{"error": "<sentence for a person>"}` with a 4xx or 5xx status.
 | `GET /api/me` | `{username, display_name, players}`, 401 without a session |
 | `GET /api/dashboard` | `{ledger_version, analysis, pending}`. `analysis` is null or `{published_at, based_on_version, sessions}`. `pending` is a list of upload summaries, newest first, at most 500 |
 | `GET /api/dashboard/html` | The published dashboard HTML, stored gzipped and returned with `Content-Encoding: gzip`. 404 when there is none or it has no sessions |
+| `GET /api/insights` | `{insights}`: this user's insights, newest `created_at` first, at most 20. Item: `{session_id, session_label, created_at, model, summary, items}`, where each of `items` is `{title, why, drill, target}` |
 | `GET /api/uploads` | `{uploads}`: visible upload summaries, newest first, at most 500 |
 | `POST /api/uploads` | Multipart, see below. 201 `{upload, duplicate: false}`, 200 `{upload, duplicate: true}` |
 | `GET /api/uploads/:id/raw` | The original file as `text/csv`. Gzip storage is returned with `Content-Encoding: gzip`. `Content-Disposition: attachment` unless `?inline=1` |
@@ -207,13 +221,14 @@ the dashboard runs in an opaque origin with no access to the cookie or the API.
 
 | Route | Behaviour |
 |---|---|
-| `GET /api/sync/state` | One D1 batch: `{ledger_version, uploads, users}`. `uploads` items: `{id, uid, sha256, filename, size, encoding, uploaded_at, uploaded_by, replace_stored, reverted_at, changed_version}`. `users` items: `{username, display_name, players}` |
+| `GET /api/sync/state` | One D1 batch: `{ledger_version, site_instance, uploads, users}`. `uploads` items: `{id, uid, sha256, filename, size, encoding, uploaded_at, uploaded_by, replace_stored, reverted_at, changed_version}`. `users` items: `{id, username, display_name, players}` |
 | `GET /api/sync/uploads/:id/raw` | Stored bytes as `application/octet-stream`, header `X-Encoding: gzip` or `identity`, no `Content-Encoding` |
 | `POST /api/sync/uploads` | JSON `{filename, sha256, size, encoding, data_b64, uploaded_at, players, shots, first_shot, last_shot, replace_stored}`. `uploaded_by` is `box`. `replace_stored` is optional and applies only when the upload is created. `players` may hold up to 200 names. Duplicate check runs against every upload with that SHA-256, active or not, and returns the newest: 200 `{upload, duplicate: true}`. Otherwise 201 `{upload, duplicate: false}` |
 | `POST /api/sync/publish` | JSON `{ledger_version, results, dashboards}`. `results`: `[{id, result}]`, also copies `result.players` and `result.shots_in_file` into the row and rewrites the upload's `upload_players` rows, only when the row's `result_version` is NULL or not above the incoming `ledger_version`. The box may send up to 200 player names, because it adds alias targets. `dashboards`: `[{username, sessions, html_gz_b64}]`, where `html_gz_b64` is null when `sessions` is 0. An analysis row is written only when the incoming `ledger_version` is not lower than the stored `based_on_version`. 400 when `ledger_version` is newer than the site's. 200 `{published: <count>}` |
 | `GET /api/sync/users` | `{users: [{username, display_name, players, created_at}]}` |
 | `PUT /api/sync/users/:username` | JSON with any of `display_name`, `players`, `key_hash`. Creating a user requires `key_hash`, and `display_name` defaults to the username. A new `key_hash` deletes that user's sessions. 200 `{user}` |
-| `DELETE /api/sync/users/:username` | Deletes the user, their sessions and their analysis. 204, or 404 |
+| `POST /api/sync/insights` | JSON `{uid, username, user_id, site_instance, session_id, session_label, created_at, model, body}`, where `body` is `{summary, items: [{title, why, drill, target}]}`. `uid` is 32 lowercase hex characters that the box chooses. `created_at` is UTC ending in `Z`. 1 to 10 items. `summary` and each item field are 1 to 600 characters, a title at most 200, with no control characters. 201 `{insight, duplicate: false}`. A second post with the same `uid` changes nothing and answers 200 `{insight, duplicate: true}` with the stored one. 409 when `site_instance` is not this database's. 404 unless the user with id `user_id`, from the sync state, still has that `username`. User ids are never reused, so a user made again under the same name never gets the old user's insights |
+| `DELETE /api/sync/users/:username` | Deletes the user, their sessions, their analysis and their insights. 204, or 404 |
 
 A publish may carry any subset of results and dashboards. The box sends results in batches
 of 100 and each dashboard in its own request, so no single request grows with the number of
@@ -233,7 +248,9 @@ parser warnings.
 - `/`: header with the user's name, an Upload button (several files at once), Uploads, Sign
   out. Below it, the analysis time and the pending uploads, each with Show shots and Undo.
   Undo reverts an active upload and restores a reverted one.
-  Then the dashboard iframe. With no analysis yet, a sentence says the uploads are saved and
+  Then the insights: the newest one in full, with the time it was made and its session, and
+  the earlier ones folded under "Earlier insights". Nothing shows when there are none, or
+  when `/api/insights` fails. Then the dashboard iframe. With no analysis yet, a sentence says the uploads are saved and
   the stats appear after the next analysis run.
 - `/uploads`: every visible upload with time, file, uploader, players, shots, state, the box's
   result, a toggle between keeping stored values and using this file's values when the result
@@ -269,6 +286,10 @@ Local store, `src/golfstats/store.py`:
 - `shots` is a view that applies the winner rule over active uploads. It exposes the old
   `shots` columns, with `upload_id` in place of `import_id`. Its `id` is the `upload_shots`
   rowid.
+- `insights(id, uid UNIQUE, username, site_user_id, site_instance, player, session_id,
+  session_label, created_at, model, body, report, published_at)` holds every insight the model
+  wrote. `site_instance`, `site_user_id` and `username` identify the site user, and all three
+  are NULL when no site is set. `report` is the markdown the model read.
 - A file that fails to parse is still stored, with `error` set and no shots.
 - `bin/golf ingest --replace` sets `replace_stored` only when the file has conflicts. On a
   file that is already marked it changes nothing. To make it win over a later upload that
@@ -311,6 +332,19 @@ Local store, `src/golfstats/store.py`:
    to the user whose dashboard uses it. When an active upload failed its hash check in step
    3, the results are published and the dashboards are not, because they would miss that
    file. Reverting it on the site, or a later good download, unblocks them.
+   Between the results and the dashboards, every local insight that has a site username and
+   no `published_at` and the state's `site_instance` is sent to `POST /api/sync/insights`, when
+   the site still has a user with that id and that username.
+   This runs even when the dashboards are held back.
+
+`bin/golf insights` runs sync first, and stops when the dashboards were held back or the state
+has no `site_instance`. Then, for
+each site user, or each `--user`, it takes the user's latest session, or `--session`, built
+the same way as that user's dashboard. A session that already has an insight is skipped
+unless `--again` is given. With no session to analyse at all, it exits 1. It sends the session's markdown report to the model, stores the
+reply in the local `insights` table with the report it read, and posts it to the site. A post
+that fails stays unpublished, and the next sync sends it. The command exits 1 when any
+insight failed, or when sync reported an error.
 
 Site settings live in `data/site.json` as `{url, token}` with mode 0600, written by
 `bin/golf site`. The URL must be `https://`, or `http://` to `localhost` or `127.0.0.1`.

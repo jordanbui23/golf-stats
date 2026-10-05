@@ -1,10 +1,15 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { D1Database } from "../dev/d1.mjs";
 import { handle } from "../src/app.js";
 
 export const ORIGIN = "https://golf.example";
 export const TOKEN = "t".repeat(40);
-const MIGRATION = readFileSync(new URL("../migrations/0001_init.sql", import.meta.url), "utf8");
+const MIGRATIONS = new URL("../migrations/", import.meta.url);
+const MIGRATION = readdirSync(MIGRATIONS)
+  .filter((n) => n.endsWith(".sql"))
+  .sort()
+  .map((n) => readFileSync(new URL(n, MIGRATIONS), "utf8"))
+  .join("\n");
 
 export function fixture(name) {
   return new Uint8Array(readFileSync(new URL(`./fixtures/${name}`, import.meta.url)));

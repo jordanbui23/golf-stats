@@ -17,9 +17,10 @@ from pathlib import Path
 from .config import Config
 from .dashboard import render_dashboard
 from .stats import split_sessions
+from .stats import Session
 from .store import (
-    connect, delete_upload, link_site_id, list_uploads, load_shots, merge_aliases, mirror_upload, set_replace,
-    set_reverted, shot_span, upload_raw, upload_result,
+    connect, delete_upload, link_site_id, list_uploads, load_shots, mark_insight_published, merge_aliases,
+    mirror_upload, set_replace, set_reverted, shot_span, unpublished_insights, upload_raw, upload_result,
 )
 
 TIMEOUT = 30
@@ -107,6 +108,9 @@ class SiteClient:
     def publish(self, payload: dict) -> dict:
         return self._json("POST", "/api/sync/publish", payload)
 
+    def push_insight(self, payload: dict) -> dict:
+        return self._json("POST", "/api/sync/insights", payload)
+
     def users(self) -> list[dict]:
         return self._json("GET", "/api/sync/users")["users"]
 
@@ -158,6 +162,10 @@ class SyncReport:
     redownloaded: int = 0
     state_changes: int = 0
     published: dict[str, int] = field(default_factory=dict)
+    insights: int = 0
+    site_instance: int | None = None
+    users: list[dict] = field(default_factory=list)
+    dashboards_blocked: bool = False
     errors: list[str] = field(default_factory=list)
 
 
@@ -239,13 +247,44 @@ def _mirror(conn, client, site_uploads: list[dict], report: SyncReport) -> tuple
     return ids, unverified
 
 
-def build_dashboard(shots: list[dict], user: dict, cfg: Config) -> dict:
+def display_name(user: dict) -> str:
+    return user.get("display_name") or user["username"]
+
+
+def user_sessions(shots: list[dict], user: dict, cfg: Config) -> list[Session]:
     players = {p.lower() for p in user.get("players", [])}
-    name = user.get("display_name") or user["username"]
+    name = display_name(user)
     mine = [{**s, "player": name} for s in shots if (s.get("player") or "").lower() in players]
-    sessions = split_sessions(mine, cfg.gap_minutes)
-    html = gzip_b64(render_dashboard(sessions, cfg, name).encode("utf-8")) if sessions else None
+    return split_sessions(mine, cfg.gap_minutes)
+
+
+def build_dashboard(shots: list[dict], user: dict, cfg: Config) -> dict:
+    sessions = user_sessions(shots, user, cfg)
+    html = gzip_b64(render_dashboard(sessions, cfg, display_name(user)).encode("utf-8")) if sessions else None
     return {"username": user["username"], "sessions": len(sessions), "html_gz_b64": html}
+
+
+INSIGHT_FIELDS = ("uid", "username", "session_id", "session_label", "created_at", "model", "body")
+
+
+def insight_payload(rec: dict) -> dict:
+    return {**{k: rec[k] for k in INSIGHT_FIELDS}, "user_id": rec["site_user_id"], "site_instance": rec["site_instance"]}
+
+
+def publish_insights(conn, client, users: list[dict], report: SyncReport) -> None:
+    if report.site_instance is None:
+        return
+    current = {(u.get("id"), u["username"].lower()) for u in users}
+    for rec in unpublished_insights(conn, report.site_instance):
+        if (rec["site_user_id"], rec["username"].lower()) not in current:
+            continue
+        try:
+            client.push_insight(insight_payload(rec))
+        except SiteError as exc:
+            report.errors.append(f"insights for {rec['username']}, session {rec['session_id']}: {exc}")
+            continue
+        mark_insight_published(conn, rec["uid"], datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        report.insights += 1
 
 
 def sync(cfg: Config, client: SiteClient) -> SyncReport:
@@ -255,6 +294,8 @@ def sync(cfg: Config, client: SiteClient) -> SyncReport:
         _push(conn, client, cfg, report)
         state = client.state()
         report.ledger_version = state["ledger_version"]
+        report.users = state["users"]
+        report.site_instance = state.get("site_instance")
         ids, unverified = _mirror(conn, client, state["uploads"], report)
         results = []
         for s in state["uploads"]:
@@ -266,10 +307,12 @@ def sync(cfg: Config, client: SiteClient) -> SyncReport:
         for i in range(0, len(results), RESULTS_PER_PUBLISH):
             client.publish({"ledger_version": report.ledger_version,
                             "results": results[i:i + RESULTS_PER_PUBLISH], "dashboards": []})
+        publish_insights(conn, client, state["users"], report)
         if unverified:
             report.errors.append(f"Dashboards not published: {len(unverified)} active upload(s) did not download intact, "
                                  f"first {unverified[0]['filename']} (site upload {unverified[0]['id']}). Sync again, "
                                  "or revert it on the site.")
+            report.dashboards_blocked = True
             return report
         shots, _ = merge_aliases(load_shots(conn), cfg.aliases)
         for user in state["users"]:

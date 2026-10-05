@@ -45,3 +45,10 @@ plan_shots = 20
 straight = [-2.0, 2.0]
 draw = [-4.0, 0.0]
 fade = [0.0, 4.0]
+
+[insights]
+# `bin/golf insights` asks this Bedrock model for action items, through the AWS CLI.
+model = "us.anthropic.claude-sonnet-5-5"
+# AWS CLI profile and region for the call. Empty means the CLI's own default.
+aws_profile = "golf-stats"
+region = "us-west-2"

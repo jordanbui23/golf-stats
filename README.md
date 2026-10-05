@@ -4,7 +4,8 @@ Turns TrackMan 4 session exports into one practice focus per session, a graded p
 next session, and a local dashboard. Everything runs on your own files. An optional upload
 site on Cloudflare Pages lets each golfer sign in, upload exports from the sim PC, and see
 their dashboard. The site stores files and shows results. The analysis runs on your machine
-when you run `bin/golf sync`. See [Upload site](#upload-site).
+when you run `bin/golf sync`. See [Upload site](#upload-site). On request, `bin/golf insights`
+asks a model to turn a session's numbers into a few action items. See [Insights](#insights).
 
 ![Dashboard built from synthetic demo sessions](docs/dashboard.png)
 
@@ -110,6 +111,7 @@ to its `http://127.0.0.1:<port>` and `GOLF_TEST_SITE_TOKEN` to its `SYNC_TOKEN` 
 | `bin/golf uploads` | List stored uploads with their state and how many of their shots are used |
 | `bin/golf site --url URL [--token-stdin]` | Save the upload site's URL and sync token in `data/site.json` |
 | `bin/golf sync` | Push local uploads, pull site uploads, publish results and dashboards |
+| `bin/golf insights [--user NAME] [--session ID] [--again]` | Sync, then ask a model for action items on each user's latest session and publish them. See [Insights](#insights) |
 | `bin/golf user add\|passwd\|players\|list\|remove` | Manage site users |
 
 ## How the focus is picked
@@ -161,11 +163,38 @@ typed at the bay. When the same shot is stored under both names, the copy import
 and the other is ignored. A copy with no ball data gives way to one that has it. Any other
 difference between the copies is reported on every run.
 
+## Insights
+
+Run this after a session when you want a coach's read on it:
+
+```
+bin/golf insights --user jordan
+```
+
+It syncs first, so an upload made on the site a minute ago counts. Then it sends the latest
+session's report to a model and asks for three to five action items, most important first.
+Each item has a title, the evidence, a drill for the bay and a target for the next session.
+The site shows the newest insights above the dashboard with the time they were made, and
+keeps the earlier ones below. Without `--user` it runs for every site user. A session that
+already has insights is skipped, and `--again` asks for new ones. Without a site, it prints
+them and stores them in `data/golf.db`.
+
+The model writes prose only. Every number stays computed by the code. The model reads the
+same markdown report as `bin/golf report`, plus the plan line, and every number in its reply
+must appear in that report, as written or rounded. A `+` or `-` sign written before a number
+must match the report too. A reply with any other number, or with the wrong shape or length,
+gets one retry that names the problem. A second failure stores nothing. The check proves that
+each number is in the report, not that it sits next to the right metric. It covers digits only,
+so a count the model writes in words is not checked.
+
+The call goes to Amazon Bedrock through the AWS CLI, so the CLI must be installed and signed in.
+`[insights]` in `config.toml` sets the model, the AWS profile and the region.
+
 ## Layout
 
 ```
 bin/golf                  CLI wrapper (uses .venv/bin/python when present)
-config.toml               player, session gap, focus thresholds and windows
+config.toml               player, session gap, focus thresholds and windows, insights model
 docs/TRACKMAN.md          what the export and parameters look like, with confidence labels
 docs/WEB.md               upload site and sync spec of record
 src/golfstats/
@@ -179,6 +208,7 @@ src/golfstats/
   report.py               markdown session report
   dashboard.py            builds the dashboard data, including the overview totals and plan results
   dashboard.html          dashboard template (vanilla JS, inline SVG, works offline)
+  insights.py             model action items from a session report, with the number check
   synth.py                synthetic TPS exports for tests and the demo
   sync.py                 upload site client: login keys, push, mirror, publish
 tests/                    pytest suite, offline
@@ -196,7 +226,7 @@ sessions.
 ## Setup
 
 Python 3.12, standard library only at runtime, so running it needs no install. The tests need
-pytest.
+pytest. `bin/golf insights` also needs the AWS CLI with Bedrock access.
 
 ```
 python3.12 -m venv .venv

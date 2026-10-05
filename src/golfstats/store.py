@@ -49,6 +49,22 @@ _TABLES = [
     PRIMARY KEY (upload_id, shot_key)
 )""",
     "CREATE INDEX IF NOT EXISTS upload_shots_key ON upload_shots(shot_key)",
+    """CREATE TABLE IF NOT EXISTS insights (
+    id INTEGER PRIMARY KEY,
+    uid TEXT NOT NULL UNIQUE,
+    username TEXT,
+    site_user_id INTEGER,
+    site_instance INTEGER,
+    player TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    session_label TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    model TEXT NOT NULL,
+    body TEXT NOT NULL,
+    report TEXT NOT NULL,
+    published_at TEXT
+)""",
+    "CREATE INDEX IF NOT EXISTS insights_session ON insights(username, session_id)",
 ]
 
 _RANK_KEYS = ["(u.site_id IS NULL)", "COALESCE(u.site_id, 0)", "u.id"]
@@ -310,6 +326,39 @@ def list_uploads(conn: sqlite3.Connection) -> list[dict]:
             u[k] = json.loads(u[k])
         out.append(u)
     return out
+
+
+def _insight(row: sqlite3.Row) -> dict:
+    return {**{k: row[k] for k in row.keys()}, "body": json.loads(row["body"])}
+
+
+def save_insight(conn: sqlite3.Connection, rec: dict, user: dict | None, site_instance: int | None) -> None:
+    with transaction(conn):
+        conn.execute("INSERT INTO insights (uid, username, site_user_id, site_instance, player, session_id,"
+                     " session_label, created_at, model, body, report) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (rec["uid"], user["username"] if user else None, user.get("id") if user else None,
+                      site_instance if user else None,
+                      rec["player"], rec["session_id"], rec["session_label"], rec["created_at"], rec["model"],
+                      json.dumps(rec["body"]), rec["report"]))
+
+
+def latest_insight(conn: sqlite3.Connection, user: dict | None, site_instance: int | None,
+                   session_id: str) -> dict | None:
+    username, user_id, site = (user["username"], user.get("id"), site_instance) if user else (None, None, None)
+    row = conn.execute("SELECT * FROM insights WHERE username IS ? AND site_user_id IS ? AND site_instance IS ?"
+                       " AND session_id = ? ORDER BY id DESC LIMIT 1", (username, user_id, site, session_id)).fetchone()
+    return _insight(row) if row else None
+
+
+def unpublished_insights(conn: sqlite3.Connection, site_instance: int | None) -> list[dict]:
+    rows = conn.execute("SELECT * FROM insights WHERE username IS NOT NULL AND site_instance = ? AND published_at IS NULL"
+                        " ORDER BY id", (site_instance,))
+    return [_insight(r) for r in rows]
+
+
+def mark_insight_published(conn: sqlite3.Connection, uid: str, at: str) -> None:
+    with transaction(conn):
+        conn.execute("UPDATE insights SET published_at = ? WHERE uid = ?", (at, uid))
 
 
 def ingest_file(conn: sqlite3.Connection, path: Path, replace: bool = False) -> IngestResult:

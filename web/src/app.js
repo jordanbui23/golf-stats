@@ -2,6 +2,7 @@ import { HttpError, errorResponse } from "./http.js";
 import { checkSyncToken, login, logout, me, originAllowed, requireUser } from "./auth.js";
 import { createUpload, listUploads, rawUpload, replaceUpload, restoreUpload, revertUpload } from "./uploads.js";
 import { dashboard, dashboardHtml } from "./dashboard.js";
+import { listInsights, syncInsight } from "./insights.js";
 import { deleteUser, putUser, syncPublish, syncPush, syncRaw, syncState, syncUsers } from "./sync.js";
 import { uploadIdParam } from "./validate.js";
 
@@ -18,6 +19,7 @@ const USER_ROUTES = [
   route("GET", "/api/me", (request, env) => me(request, env)),
   route("GET", "/api/dashboard", withUser((request, user, env) => dashboard(user, env))),
   route("GET", "/api/dashboard/html", withUser((request, user, env) => dashboardHtml(user, env))),
+  route("GET", "/api/insights", withUser((request, user, env) => listInsights(user, env))),
   route("GET", "/api/uploads", withUser((request, user, env) => listUploads(user, env))),
   route("POST", "/api/uploads", withUser((request, user, env) => createUpload(request, user, env))),
   route("GET", "/api/uploads/([^/]+)/raw", withUser((request, user, env, p) => rawUpload(request, user, env, uploadId(p)))),
@@ -31,6 +33,7 @@ const SYNC_ROUTES = [
   route("GET", "/api/sync/uploads/([^/]+)/raw", (request, env, p) => syncRaw(env, uploadIdParam(p[0]))),
   route("POST", "/api/sync/uploads", (request, env) => syncPush(request, env)),
   route("POST", "/api/sync/publish", (request, env) => syncPublish(request, env)),
+  route("POST", "/api/sync/insights", (request, env) => syncInsight(request, env)),
   route("GET", "/api/sync/users", (request, env) => syncUsers(env)),
   route("PUT", "/api/sync/users/([^/]+)", (request, env, p) => putUser(request, env, p[0])),
   route("DELETE", "/api/sync/users/([^/]+)", (request, env, p) => deleteUser(env, p[0])),
