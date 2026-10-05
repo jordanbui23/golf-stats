@@ -5,5 +5,5 @@ compatibility_date = "2026-10-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "golf-stats"
-database_id = "REPLACE_WITH_YOUR_D1_ID"
+database_id = "8b960c74-31d3-401a-8b4b-0cfb94a2dfa2"
 migrations_dir = "migrations"
